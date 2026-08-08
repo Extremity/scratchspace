@@ -449,9 +449,9 @@ The current implementation likely uses `ggml_backend_tensor_copy()` for the actu
 | Backup cells | 4 (indices 4-7) |
 | R/S tensor rows | `mem_size * (1 + n_rs_seq) = 8 * 1 = 8` |
 | R per row (F32) | `n_embd_r × n_layers = 30720 × 48 = 1,474,560` elements = 5.9 MB |
-| S per row (F32) | `n_embd_s × n_layers = 786432 × 48 = 37,748,736` elements = 147 MB |
-| **Per cell (R+S)** | **~153 MB** |
-| **Extra VRAM for 4 backup cells** | **~612 MB** |
+| S per row (F32) | `n_embd_s × n_layers = 786432 × 48 = 37,748,736` elements = 149.9 MB |
+| **Per cell (R+S)** | **~156 MB** |
+| **Extra VRAM for 4 backup cells** | **~623 MB** |
 
 ### 5.2 6R Proposal (Separate Backup Tensor Rows)
 
@@ -468,9 +468,9 @@ The current implementation likely uses `ggml_backend_tensor_copy()` for the actu
 
 | Approach | Extra Cells | Extra VRAM | Notes |
 |----------|-------------|------------|-------|
-| Old v0.3.2 | 4 | ~612 MB | Shared ring buffer, `mem_size = 2*n_parallel` |
-| 6R Proposal | 8 | ~1,224 MB | Separate backup rows, `n_backup = 2*n` |
-| **Minimum Needed** | **4** | **~612 MB** | Same as old v0.3.2 |
+| Old v0.3.2 | 4 | ~623 MB | Shared ring buffer, `mem_size = 2*n_parallel` |
+| 6R Proposal | 8 | ~1,246 MB | Separate backup rows, `n_backup = 2*n` |
+| **Minimum Needed** | **4** | **~623 MB** | Same as old v0.3.2 |
 
 ### 5.4 Why 6R Proposed 8 Backup Cells
 
@@ -484,7 +484,7 @@ The 6R proposal at [`task6r-revised-blueprint-part2.md:180`](plans/dflash-soluti
 
 ### 6.1 Recommendation: YES — Reduce to `n_parallel` Backup Cells
 
-The 6R blueprint should be modified to use `n_backup_cells = n_parallel` (not `2 * n_parallel`). This matches the old v0.3.2 approach and reduces backup cell VRAM from ~1,224 MB to ~612 MB.
+The 6R blueprint should be modified to use `n_backup_cells = n_parallel` (not `2 * n_parallel`). This matches the old v0.3.2 approach and reduces backup cell VRAM from ~1,246 MB to ~623 MB. SPOT FIX (2026-08-08): Corrected ~612→~623 MB and ~1,224→~1,246 MB.
 
 ### 6.2 Revised Memory Budget
 
@@ -492,8 +492,8 @@ The 6R blueprint should be modified to use `n_backup_cells = n_parallel` (not `2
 |-----------|----------------|------------------|
 | Hidden-state/cross ring | ~200 MB | ~200 MB (unchanged) |
 | GPU tape (Part 1 corrected) | ~85-117 MB | ~85-117 MB (unchanged) |
-| Backup cells | ~1,246 MB | **~612 MB** |
-| **Total auxiliary** | **~1.53-1.57 GB** | **~897 MB** |
+| Backup cells | ~1,246 MB | **~623 MB** |
+| **Total auxiliary** | **~1.53-1.57 GB** | **~908 MB** |
 
 ### 6.3 Implementation Changes
 
@@ -502,7 +502,7 @@ The blueprint at [`task6r-revised-blueprint-part2.md`](plans/dflash-solutions/ta
 1. **Change `n_backup_cells` from `n_parallel * 2` to `n_parallel`.**
 2. **Use the old `seq_cp()` approach** — no new `cell_copy()` API needed. Simply expand `mem_size` to `2 * n_parallel` for DFlash mode and use sequence IDs `n_parallel .. 2*n_parallel-1` for backup.
 3. **Add `seq_cp_recurrent_no_sync()` back** — or ensure the current `seq_cp()` doesn't host-sync during backup.
-4. **Update memory accounting** in Section C.4.2 to reflect the revised ~612 MB backup budget.
+4. **Update memory accounting** in Section C.4.2 to reflect the revised ~623 MB backup budget. SPOT FIX (2026-08-08)
 
 ### 6.4 Alternative: Even Smaller Backup with Quantization
 
@@ -510,9 +510,9 @@ If R/S tensors use a lower precision (e.g., BF16 instead of F32), the backup cel
 
 | Precision | Per Cell | 4 Backup Cells |
 |-----------|----------|----------------|
-| F32 | ~153 MB | ~612 MB |
-| BF16 | ~77 MB | ~306 MB |
-| FP16 | ~77 MB | ~306 MB |
+| F32 | ~156 MB | ~623 MB |
+| BF16 | ~78 MB | ~312 MB |
+| FP16 | ~78 MB | ~312 MB |
 
 If the revised design can use BF16 for backup cells (while keeping F32 for active cells), total auxiliary drops to ~660 MB. This would require the backup `seq_cp()` to handle type conversion, or allocate backup rows with a different quantization.
 
@@ -524,14 +524,14 @@ If the revised design can use BF16 for backup cells (while keeping F32 for activ
 |----------|--------|
 | How did old 0.3.2 restore recurrent state? | `seq_cp(backup_seq, active_seq)` copied R/S from backup cell to active cell, followed by tape replay. |
 | Did old 0.3.2 pre-allocate backup cells? | Yes — `mem_size = 2 * n_parallel` at construction, giving `n_parallel` extra cells for backup. |
-| What is the actual VRAM cost of old backup cells? | ~612 MB for `n_parallel=4` (4 extra cells × ~153 MB each at F32). |
+| What is the actual VRAM cost of old backup cells? | ~623 MB for `n_parallel=4` (4 extra cells × ~156 MB each at F32). SPOT FIX (2026-08-08) |
 | Can the revised design use the same approach? | Yes — use `seq_cp()` with expanded `mem_size`. No new APIs needed. |
-| What is the corrected backup cell budget? | **~612 MB** for `n_parallel=4`, not ~1,246 MB. |
-| Should the blueprint be modified? | **Yes** — reduce `n_backup_cells` from `2*n_parallel` to `n_parallel`. Total auxiliary drops from ~1.53 GB to ~897 MB. |
+| What is the corrected backup cell budget? | **~623 MB** for `n_parallel=4`, not ~1,246 MB. SPOT FIX (2026-08-08) |
+| Should the blueprint be modified? | **Yes** — reduce `n_backup_cells` from `2*n_parallel` to `n_parallel`. Total auxiliary drops from ~1.53 GB to ~908 MB. SPOT FIX (2026-08-08) |
 
-### 7.1 Key Correction
+### 7.1 Key Correction SPOT FIX (2026-08-08): Updated ~612→~623 MB and ~897→~908 MB.
 
-The 6R revised blueprint overestimated backup cell needs by using `n_backup_cells = 2 * n_parallel = 8` instead of the old v0.3.2 value of `n_backup_cells = n_parallel = 4`. The old code proved that 1 backup cell per slot is sufficient for the rollback-then-replay pattern. The corrected total auxiliary budget is **~897 MB** (200 MB ring + 85-117 MB tape + 612 MB backup cells), not ~1.53-1.57 GB.
+The 6R revised blueprint overestimated backup cell needs by using `n_backup_cells = 2 * n_parallel = 8` instead of the old v0.3.2 value of `n_backup_cells = n_parallel = 4`. The old code proved that 1 backup cell per slot is sufficient for the rollback-then-replay pattern. The corrected total auxiliary budget is **~908 MB** (200 MB ring + 85-117 MB tape + 623 MB backup cells), not ~1.53-1.57 GB.
 
 ### 7.2 Action Items
 

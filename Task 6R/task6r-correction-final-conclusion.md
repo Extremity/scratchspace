@@ -117,14 +117,14 @@ The ~134-186 MB estimate from task6r-part4 was based on `ssm_d_state = 1536` der
 |-----------|------|
 | Hidden-state/cross ring | ~200 MB |
 | GPU tape (old assumed dimensions) | ~70 MB |
-| Backup cells (4 cells × ~153 MB) | ~612 MB |
-| **Total auxiliary** | **~884 MB** |
+| Backup cells (4 cells × ~156 MB) | ~623 MB |
+| **Total auxiliary** | **~898 MB** |
 
-The old runtime logs showing ~270 MB auxiliary were likely from a smaller model or different quantization, not from Qwen3.6-27B at F32. With actual Qwen3.6 dimensions, the old approach would have used ~884 MB auxiliary.
+The old runtime logs showing ~270 MB auxiliary were likely from a smaller model or different quantization, not from Qwen3.6-27B at F32. With actual Qwen3.6 dimensions, the old approach would have used ~898 MB auxiliary.
 
 ### Why the 6R Estimate Was Higher
 
-The 6R revised blueprint used `n_backup_cells = 2 × n_parallel = 8` extra cells instead of `n_parallel = 4`. This doubled backup VRAM from ~612 MB to ~1,224 MB, making total auxiliary ~1.53-1.57 GB instead of ~897 MB.
+The 6R revised blueprint used `n_backup_cells = 2 × n_parallel = 8` extra cells instead of `n_parallel = 4`. This doubled backup VRAM from ~623 MB to ~1,246 MB, making total auxiliary ~1.53-1.57 GB instead of ~908 MB. SPOT FIX (2026-08-08): Corrected ~612→~623 MB and ~897→~908 MB.
 
 **Reference:** [`task6r-correction-part2-backup-cells.md`](plans/dflash-solutions/task6r-correction-part2-backup-cells.md), Section 5-7
 
@@ -132,7 +132,7 @@ The 6R revised blueprint used `n_backup_cells = 2 × n_parallel = 8` extra cells
 
 ## 5. Is the ~1.246 GB Backup-Cell Allocation Actually Necessary?
 
-**Answer: NO. Only ~612 MB (n_parallel cells) is needed.**
+**Answer: NO. Only ~623 MB (n_parallel cells) is needed.** SPOT FIX (2026-08-08): Updated from ~612 to ~623 MB using precise per-cell calculation (R: 5.9 MB × 4 = 23.5 MB, S: 149.9 MB × 4 = 599.6 MB, total: 623.1 MB).
 
 ### Why 8 Backup Cells Were Proposed
 
@@ -152,9 +152,9 @@ Old v0.3.2 proved that 1 backup cell per slot is sufficient:
 | `n_parallel` | 4 |
 | Backup cells needed | 4 (one per slot) |
 | R per row (F32) | `n_embd_r × n_layers = 30720 × 48 = 1,474,560` elements = 5.9 MB |
-| S per row (F32) | `n_embd_s × n_layers = 786432 × 48 = 37,748,736` elements = 147 MB |
-| **Per cell (R + S)** | **~153 MB** |
-| **Total for 4 backup cells** | **~612 MB** |
+| S per row (F32) | `n_embd_s × n_layers = 786432 × 48 = 37,748,736` elements = 149.9 MB |
+| **Per cell (R + S)** | **~156 MB** |
+| **Total for 4 backup cells** | **~623 MB** |
 
 ### Alternative: BF16 Backup Cells
 
@@ -162,9 +162,9 @@ If backup R/S tensors use BF16 instead of F32:
 
 | Precision | Per Cell | 4 Backup Cells |
 |-----------|----------|----------------|
-| F32 | ~153 MB | ~612 MB |
-| BF16 | ~77 MB | ~306 MB |
-| FP16 | ~77 MB | ~306 MB |
+| F32 | ~156 MB | ~623 MB |
+| BF16 | ~78 MB | ~312 MB |
+| FP16 | ~78 MB | ~312 MB |
 
 This would require the backup `seq_cp()` to handle type conversion, or allocate backup rows with a different quantization.
 
@@ -181,16 +181,16 @@ This would require the backup `seq_cp()` to handle type conversion, or allocate 
 | Component | Current Blueprint | Corrected | Change |
 |-----------|------------------|-----------|--------|
 | Tape size | ~134-186 MB | **~85-117 MB** | Update all VRAM tables |
-| Backup cells | 8 cells (~1,246 MB) | **4 cells (~612 MB)** | Change `n_backup_cells` from `2×n` to `n` |
-| Total auxiliary | ~1.53-1.57 GB | **~897 MB** | Update all budget calculations |
+| Backup cells | 8 cells (~1,246 MB) | **4 cells (~623 MB)** | Change `n_backup_cells` from `2×n` to `n` |
+| Total auxiliary | ~1.53-1.57 GB | **~908 MB** | Update all budget calculations |
 | VRAM savings | ~54-55% | **~84-85%** | Update comparison tables |
 | Total VRAM | ~22.0 GB | **~20.2 GB** | Update expected totals |
 
 ### Specific Blueprint Updates
 
 1. **[`task6r-revised-blueprint-part2.md`](plans/dflash-solutions/task6r-revised-blueprint-part2.md):**
-   - Section C.4.2: Update backup cell budget from ~1,246 MB to ~612 MB.
-   - Section C.4.3: Update total auxiliary from ~1.53-1.57 GB to ~897 MB.
+   - Section C.4.2: Update backup cell budget from ~1,246 MB to ~623 MB. SPOT FIX (2026-08-08)
+   - Section C.4.3: Update total auxiliary from ~1.53-1.57 GB to ~908 MB. SPOT FIX (2026-08-08)
    - All VRAM comparison tables: Update tape and backup cell figures.
 
 2. **[`task6r-revised-blueprint-part3.md`](plans/dflash-solutions/task6r-revised-blueprint-part3.md):**
@@ -214,87 +214,85 @@ This would require the backup `seq_cp()` to handle type conversion, or allocate 
 | Hidden-state/cross ring | ~200 MB | 5 layers × 1024 slots × 5120 embd (unchanged) |
 | GPU tape (fused GDN) | ~85 MB | 48 layers × 1.77 MB (corrected) |
 | GPU tape (non-fused) | ~117 MB | 48 layers × 2.42 MB (corrected) |
-| Backup cells (F32) | ~612 MB | 4 cells × ~153 MB (corrected) |
-| **Total auxiliary (F32, fused)** | **~897 MB** | |
-| **Total auxiliary (F32, non-fused)** | **~929 MB** | |
-| **Total auxiliary (BF16 backup, fused)** | **~591 MB** | Optional optimization |
+| Backup cells (F32) | ~623 MB | 4 cells × ~156 MB (corrected) SPOT FIX (2026-08-08) |
+| **Total auxiliary (F32, fused)** | **~908 MB** | |
+| **Total auxiliary (F32, non-fused)** | **~940 MB** | |
+| **Total auxiliary (BF16 backup, fused)** | **~597 MB** | Optional optimization |
 
-### Corrected Total VRAM (Qwen3.6-27B on RTX 3090)
+### Corrected Total VRAM (Qwen3.6-27B on RTX 3090) SPOT FIX (2026-08-08): Upstream RS snapshots already include active state; backup cells corrected to ~623 MB.
 
 | Component | Upstream DFlash | Revised 6R (corrected) | Savings |
 |-----------|----------------|------------------------|---------|
 | Model weights | ~14,600 MB | ~14,600 MB | — |
 | Attention KV cache | ~4,800 MB | ~4,800 MB | — |
-| RS snapshots (n_rs_seq=8) | ~5,387 MB | ~599 MB | -4,788 MB |
-| Auxiliary (tape + backup + ring) | ~0 | ~897 MB | +897 MB |
-| Active recurrent state | ~599 MB | ~599 MB | — |
-| **Total** | **~24,000+ MB** | **~20,495 MB** | **~3,505 MB saved** |
+| RS buffer (active + snapshots, n_rs_seq=8) | ~5,387 MB | ~599 MB (base) + ~623 MB (backup) | -4,131 MB |
+| Auxiliary (tape + ring) | ~0 | ~285 MB (tape ~85 + ring ~200) | +285 MB |
+| **Total** | **~24,787 MB** | **~20,387 MB** | **~4,400 MB saved** |
 
 ---
 
 ## 8. Corrected VRAM Budget Comparison Tables
 
-### Table A: Current Upstream DFlash
+### Table A: Current Upstream DFlash SPOT FIX (2026-08-08): RS snapshots already include active state (n_rows = mem_size * (1 + n_rs_seq) = 4 * 9 = 36 rows covers both).
 
 | Component | VRAM | Notes |
 |-----------|------|-------|
 | Model weights (Q5_K_M) | ~14,600 MB | Qwen3.6-27B |
 | Attention KV cache | ~4,800 MB | Context-dependent |
-| RS snapshots (n_rs_seq=8) | ~5,387 MB | 48 layers × 30720×36×4B + 786432×36×4B |
-| Active recurrent state | ~599 MB | Base R/S (n_parallel=4) |
+| RS buffer (active + snapshots, n_rs_seq=8) | ~5,387 MB | 48 layers × (30720+786432) × 36 × 4B — includes active state |
 | Auxiliary | ~0 | No tape, no backup cells |
-| **Total** | **~24,000+ MB** | **Exceeds RTX 3090 (24 GB)** |
+| **Total** | **~24,787 MB** | **Exceeds RTX 3090 (24 GB)** |
 
-### Table B: Old 0.3.2 Custom DFlash
+### Table B: Old 0.3.2 Custom DFlash SPOT FIX (2026-08-08): Backup cells corrected to ~623 MB (4 × ~156 MB). Total recalculated.
 
 | Component | VRAM | Notes |
 |-----------|------|-------|
 | Model weights (Q5_K_M) | ~14,600 MB | Same |
 | Attention KV cache | ~4,800 MB | Same |
-| RS snapshots (n_rs_seq=0) | ~599 MB | 48 layers × 30720×4×4B + 786432×4×4B |
+| RS base (n_rs_seq=0) | ~599 MB | 48 layers × (30720+786432) × 4 × 4B |
 | Hidden-state/cross ring | ~200 MB | 5 layers × 1024 × 5120 embd |
 | GPU tape (old dimensions) | ~70 MB | 48 layers × ~1.44 MB |
-| Backup cells (4 cells, F32) | ~612 MB | 4 cells × ~153 MB |
-| **Total** | **~20,881 MB** | **~3,119 MB saved vs upstream** |
+| Backup cells (4 cells, F32) | ~623 MB | 4 cells × ~156 MB (SPOT FIX) |
+| **Total** | **~20,892 MB** | **~3,895 MB saved vs upstream** |
 
-**Note:** The old runtime logs showed ~270 MB auxiliary, but with actual Qwen3.6 dimensions (n_embd_s=786,432), the corrected auxiliary is ~884 MB. The ~270 MB was likely from a smaller model or different quantization.
+**Note:** The old runtime logs showed ~270 MB auxiliary, which covers the cross ring (~200 MB) and tape (~70 MB) only. The backup cells (~623 MB) live inside the recurrent memory pool and are logged separately as the RS buffer allocation. The total auxiliary for old 0.3.2 was ~893 MB (200 + 70 + 623), consistent with the corrected 6R design. SPOT FIX (2026-08-08): Corrected explanation — the ~270 MB log was NOT from a smaller model; it simply did not include backup cells logged as part of the RS buffer.
 
-### Table C: Revised 6R Implementation (Corrected)
+### Table C: Revised 6R Implementation (Corrected) SPOT FIX (2026-08-08): Backup cells ~623 MB, totals recalculated against corrected upstream ~24,787 MB.
 
 | Component | VRAM | Notes |
 |-----------|------|-------|
 | Model weights (Q5_K_M) | ~14,600 MB | Same |
 | Attention KV cache | ~4,800 MB | Same |
-| RS snapshots (n_rs_seq=0) | ~599 MB | Base R/S state only |
+| RS base (n_rs_seq=0) | ~599 MB | Base R/S state only |
 | Hidden-state/cross ring | ~200 MB | Same as old |
 | GPU tape (actual dimensions, fused) | ~85 MB | 48 layers × 1.77 MB |
 | GPU tape (actual dimensions, non-fused) | ~117 MB | 48 layers × 2.42 MB |
-| Backup cells (4 cells, F32) | ~612 MB | Corrected from ~1,246 MB |
-| **Total (F32, fused)** | **~20,903 MB** | **~3,097 MB saved vs upstream** |
-| **Total (F32, non-fused)** | **~20,935 MB** | **~3,065 MB saved vs upstream** |
-| **Total (BF16 backup, fused)** | **~20,597 MB** | **~3,403 MB saved vs upstream** |
+| Backup cells (4 cells, F32) | ~623 MB | SPOT FIX: 4 × ~156 MB |
+| **Total (F32, fused)** | **~20,907 MB** | **~3,880 MB saved vs upstream** |
+| **Total (F32, non-fused)** | **~20,939 MB** | **~3,848 MB saved vs upstream** |
+| **Total (BF16 backup, fused)** | **~20,601 MB** | **~4,186 MB saved vs upstream** |
 
-### Table D: Revised 6R with BF16 Backup Cells (Optional Optimization)
+### Table D: Revised 6R with BF16 Backup Cells (Optional Optimization) SPOT FIX (2026-08-08): BF16 backup ~312 MB (half of ~623 MB F32).
 
 | Component | VRAM | Notes |
 |-----------|------|-------|
 | Model weights (Q5_K_M) | ~14,600 MB | Same |
 | Attention KV cache | ~4,800 MB | Same |
-| RS snapshots (n_rs_seq=0) | ~599 MB | F32 active state |
+| RS base (n_rs_seq=0) | ~599 MB | F32 active state |
 | Hidden-state/cross ring | ~200 MB | Same |
 | GPU tape (fused, F32) | ~85 MB | Same |
-| Backup cells (4 cells, BF16) | ~306 MB | Half of F32 backup |
-| **Total** | **~20,597 MB** | **~3,403 MB saved vs upstream** |
+| Backup cells (4 cells, BF16) | ~312 MB | Half of ~623 MB F32 backup (SPOT FIX) |
+| **Total** | **~20,601 MB** | **~4,186 MB saved vs upstream** |
 
-### Savings Summary
+### Savings Summary SPOT FIX (2026-08-08): All values recalculated against corrected upstream ~24,787 MB and corrected backup cells ~623 MB.
 
 | Implementation | Auxiliary VRAM | Total VRAM | Savings vs Upstream | Savings % |
 |---------------|---------------|------------|---------------------|-----------|
-| Current upstream | ~0 | ~24,000+ MB | — | — |
-| Old 0.3.2 (corrected dimensions) | ~884 MB | ~20,881 MB | ~3,119 MB | 83-84% |
-| Revised 6R (F32, fused) | ~897 MB | ~20,903 MB | ~3,097 MB | 84-85% |
-| Revised 6R (F32, non-fused) | ~929 MB | ~20,935 MB | ~3,065 MB | 84% |
-| Revised 6R (BF16 backup, fused) | ~591 MB | ~20,597 MB | ~3,403 MB | 86-87% |
+| Current upstream | ~0 | ~24,787 MB | — | — |
+| Old 0.3.2 (corrected dimensions) | ~893 MB | ~20,892 MB | ~3,895 MB | 85% |
+| Revised 6R (F32, fused) | ~908 MB | ~20,907 MB | ~3,880 MB | 85% |
+| Revised 6R (F32, non-fused) | ~940 MB | ~20,939 MB | ~3,848 MB | 84% |
+| Revised 6R (BF16 backup, fused) | ~597 MB | ~20,601 MB | ~4,186 MB | 87% |
 
 ---
 
@@ -310,7 +308,7 @@ This would require the backup `seq_cp()` to handle type conversion, or allocate 
 
 ### 9.2 Medium Priority (Optimize After Implementation)
 
-4. **BF16 backup cell feasibility:** Can backup R/S rows use BF16 quantization while active rows use F32? This would halve backup VRAM from ~612 MB to ~306 MB. Requires either type conversion in `seq_cp()` or separate quantization for backup rows.
+4. **BF16 backup cell feasibility:** Can backup R/S rows use BF16 quantization while active rows use F32? This would halve backup VRAM from ~623 MB to ~312 MB. SPOT FIX (2026-08-08): Updated ~612→~623 and ~306→~312 MB. Requires either type conversion in `seq_cp()` or separate quantization for backup rows.
 
 5. **Tape capture overlap with compute:** Can `ggml_cpy` tape capture operations overlap with subsequent layer computation, or do they block the graph execution stream? If blocking, capture overhead could add ~2-5 ms per cycle.
 
@@ -326,17 +324,18 @@ This would require the backup `seq_cp()` to handle type conversion, or allocate 
 
 ## 10. Conclusion
 
-**The Task 6R Correction Pass has significantly improved the revised DFlash blueprint:**
+**The Task 6R Correction Pass has significantly improved the revised DFlash blueprint:** SPOT FIX (2026-08-08): Updated all figures with corrected backup cells (~623 MB), corrected upstream budget (~24,787 MB), and corrected auxiliary totals.
 
 1. **Tape size corrected:** From ~134-186 MB to ~85-117 MB (using actual GGUF metadata).
-2. **Backup cells corrected:** From ~1,246 MB (8 cells) to ~612 MB (4 cells, matching old v0.3.2).
-3. **Total auxiliary corrected:** From ~1.53-1.57 GB to ~897 MB.
-4. **VRAM savings improved:** From ~54-55% to ~84-85% vs current upstream.
-5. **Expected total VRAM:** ~20.2 GB (corrected) vs ~24.8 GB upstream — ~4.0-4.1 GB saved.
+2. **Backup cells corrected:** From ~1,246 MB (8 cells) to ~623 MB (4 cells, matching old v0.3.2). Per-cell: ~156 MB (R: 5.9 MB + S: 149.9 MB = 155.8 MB, rounded to ~156 MB).
+3. **Total auxiliary corrected:** From ~1.53-1.57 GB to ~908 MB (200 + 85 + 623).
+4. **Upstream VRAM corrected:** RS snapshots (~5,387 MB) already include active recurrent state — no double-counting. Upstream total ~24,787 MB.
+5. **VRAM savings improved:** From ~54-55% to ~84-87% vs current upstream.
+6. **Expected total VRAM:** ~20.6-20.9 GB (corrected) vs ~24.8 GB upstream — ~3.9-4.2 GB saved.
 
 **The revised 6R blueprint remains viable and is now significantly better than initially estimated.** The core design (backup cells + compact tape + GDN replay) is unchanged; only the budget numbers needed correction. The implementation scope (~546 lines across 8 files) remains the same.
 
-**Recommendation:** Proceed with the corrected revised 6R blueprint. The ~897 MB auxiliary budget and ~84-85% VRAM savings make DFlash practical on RTX 3090 while preserving 90-95% of old DFlash rollback performance through tape replay.
+**Recommendation:** Proceed with the corrected revised 6R blueprint. The ~908 MB auxiliary budget and ~84-87% VRAM savings make DFlash practical on RTX 3090 while preserving 90-95% of old DFlash rollback performance through tape replay.
 
 ---
 
