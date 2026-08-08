@@ -484,7 +484,7 @@ The 6R proposal at [`task6r-revised-blueprint-part2.md:180`](plans/dflash-soluti
 
 ### 6.1 Recommendation: YES — Reduce to `n_parallel` Backup Cells
 
-The 6R blueprint should be modified to use `n_backup_cells = n_parallel` (not `2 * n_parallel`). This matches the old v0.3.2 approach and reduces backup cell VRAM from ~1,246 MB to ~623 MB. SPOT FIX (2026-08-08): Corrected ~612→~623 MB and ~1,224→~1,246 MB.
+The 6R blueprint should be modified to use `n_backup_cells = n_parallel` (not `2 * n_parallel`). This matches the old v0.3.2 approach and reduces backup cell VRAM from ~1,246 MB to ~623 MB.
 
 ### 6.2 Revised Memory Budget
 
@@ -502,7 +502,7 @@ The blueprint at [`task6r-revised-blueprint-part2.md`](plans/dflash-solutions/ta
 1. **Change `n_backup_cells` from `n_parallel * 2` to `n_parallel`.**
 2. **Use the old `seq_cp()` approach** — no new `cell_copy()` API needed. Simply expand `mem_size` to `2 * n_parallel` for DFlash mode and use sequence IDs `n_parallel .. 2*n_parallel-1` for backup.
 3. **Add `seq_cp_recurrent_no_sync()` back** — or ensure the current `seq_cp()` doesn't host-sync during backup.
-4. **Update memory accounting** in Section C.4.2 to reflect the revised ~623 MB backup budget. SPOT FIX (2026-08-08)
+4. **Update memory accounting** in Section C.4.2 to reflect the revised ~623 MB backup budget.
 
 ### 6.4 Alternative: Even Smaller Backup with Quantization
 
@@ -524,12 +524,12 @@ If the revised design can use BF16 for backup cells (while keeping F32 for activ
 |----------|--------|
 | How did old 0.3.2 restore recurrent state? | `seq_cp(backup_seq, active_seq)` copied R/S from backup cell to active cell, followed by tape replay. |
 | Did old 0.3.2 pre-allocate backup cells? | Yes — `mem_size = 2 * n_parallel` at construction, giving `n_parallel` extra cells for backup. |
-| What is the actual VRAM cost of old backup cells? | ~623 MB for `n_parallel=4` (4 extra cells × ~156 MB each at F32). SPOT FIX (2026-08-08) |
+| What is the actual VRAM cost of old backup cells? | ~623 MB for `n_parallel=4` (4 extra cells × ~156 MB each at F32). |
 | Can the revised design use the same approach? | Yes — use `seq_cp()` with expanded `mem_size`. No new APIs needed. |
-| What is the corrected backup cell budget? | **~623 MB** for `n_parallel=4`, not ~1,246 MB. SPOT FIX (2026-08-08) |
-| Should the blueprint be modified? | **Yes** — reduce `n_backup_cells` from `2*n_parallel` to `n_parallel`. Total auxiliary drops from ~1.53 GB to ~908 MB. SPOT FIX (2026-08-08) |
+| What is the corrected backup cell budget? | **~623 MB** for `n_parallel=4`, not ~1,246 MB. |
+| Should the blueprint be modified? | **Yes** — reduce `n_backup_cells` from `2*n_parallel` to `n_parallel`. Total auxiliary drops from ~1.53 GB to ~908 MB. |
 
-### 7.1 Key Correction SPOT FIX (2026-08-08): Updated ~612→~623 MB and ~897→~908 MB.
+### 7.1 Key Correction
 
 The 6R revised blueprint overestimated backup cell needs by using `n_backup_cells = 2 * n_parallel = 8` instead of the old v0.3.2 value of `n_backup_cells = n_parallel = 4`. The old code proved that 1 backup cell per slot is sufficient for the rollback-then-replay pattern. The corrected total auxiliary budget is **~908 MB** (200 MB ring + 85-117 MB tape + 623 MB backup cells), not ~1.53-1.57 GB.
 

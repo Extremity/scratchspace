@@ -173,13 +173,13 @@ class llama_memory_recurrent {
 
 **For non-fused GDN (H_k = 48):** k tensor grows to `[128, 48, 25]` = 153,600 elements = 614,400 bytes. Per layer = ~2.42 MB. Total = ~117 MB.
 
-**Allocation:** Pre-allocated once per slot at server init. Reused every cycle. Device-aware placement (each layer's tape on the same GPU as the model layer). SPOT FIX (2026-08-08): Tape is allocated **per slot** (not shared), following the old v0.3.2 pattern where `dflash_capture->tapes.push_back()` stores one `dflash_tape_gpu` per slot in a loop over `n_slots`. For `n_parallel=4` slots, total tape = ~340 MB (fused) or ~468 MB (non-fused), not ~85-117 MB.
+**Allocation:** Pre-allocated once per slot at server init. Reused every cycle. Device-aware placement (each layer's tape on the same GPU as the model layer). Tape is allocated **per slot** (not shared), following the old v0.3.2 pattern where `dflash_capture->tapes.push_back()` stores one `dflash_tape_gpu` per slot in a loop over `n_slots`. For `n_parallel=4` slots, total tape = ~340 MB (fused) or ~468 MB (non-fused), not ~85-117 MB.
 
 **Lifetime:** Server lifetime. No per-cycle allocation. Per-slot instance.
 
 #### C.4.2 Backup Cells
 
-**CORRECTION (2026-08-08):** This section has been revised based on [`task6r-correction-part2-backup-cells.md`](task6r-correction-part2-backup-cells.md). The previous estimate used `n_backup_cells = n_parallel * 2 = 8` extra cells. The old v0.3.2 code proved that `n_backup_cells = n_parallel = 4` is sufficient (1 backup cell per slot). This reduces backup cell VRAM from ~1,246 MB to ~623 MB. SPOT FIX (2026-08-08): Corrected ~612→~623 MB using precise per-cell calculation (R: 5.9 MB + S: 149.9 MB = 155.8 MB ≈ ~156 MB per cell, × 4 cells = ~623 MB).
+**CORRECTION (2026-08-08):** This section has been revised based on [`task6r-correction-part2-backup-cells.md`](task6r-correction-part2-backup-cells.md). The previous estimate used `n_backup_cells = n_parallel * 2 = 8` extra cells. The old v0.3.2 code proved that `n_backup_cells = n_parallel = 4` is sufficient (1 backup cell per slot). This reduces backup cell VRAM from ~1,246 MB to ~623 MB. Per-cell calculation: R: 5.9 MB + S: 149.9 MB = 155.8 MB ≈ ~156 MB per cell, × 4 cells = ~623 MB.
 
 The R tensor has shape `[n_embd_r, n_rows]` and the S tensor has shape `[n_embd_s, n_rows]`. The current allocation is `n_rows = mem_size * (1 + n_rs_seq)`. With `n_rs_seq=0` and `mem_size = n_ctx * n_parallel`, that's `n_rows = n_ctx * n_parallel`.
 
@@ -215,8 +215,8 @@ The old v0.3.2 used `mem_size = 2 * n_parallel = 8` total cells (4 normal + 4 ba
 
 | Component | Location | Size (Qwen3.6, n_parallel=4) | Lifetime |
 |-----------|----------|--------------------------------|----------|
-| GPU tape (fused, 4 slots) | GPU | ~340 MB (~85 MB × 4 slots) SPOT FIX | Server lifetime |
-| GPU tape (non-fused, 4 slots) | GPU | ~468 MB (~117 MB × 4 slots) SPOT FIX | Server lifetime |
+| GPU tape (fused, 4 slots) | GPU | ~340 MB (~85 MB × 4 slots) | Server lifetime |
+| GPU tape (non-fused, 4 slots) | GPU | ~468 MB (~117 MB × 4 slots) | Server lifetime |
 | Backup cells (4) | GPU | ~623 MB | Server lifetime |
 | Base RS (n_rs_seq=0) | GPU | ~599 MB | Server lifetime |
 | Replay graph context | GPU | ~1-2 MB | Server lifetime |
@@ -227,7 +227,7 @@ The old v0.3.2 used `mem_size = 2 * n_parallel = 8` total cells (4 normal + 4 ba
 | **VRAM saved (fused)** | | **~3,680 MB (~3.6 GB)** | |
 | **VRAM saved (non-fused)** | | **~3,553 MB (~3.5 GB)** | |
 
-**Note (SPOT FIX 2026-08-08):** Tape is allocated per-slot (not shared), following old v0.3.2 pattern where each slot gets its own `dflash_tape_gpu` instance. For `n_parallel=4`, total tape = ~340 MB (fused) or ~468 MB (non-fused). This increases total DFlash overhead from the previous ~2.1 GB estimate to ~2.5 GB but still saves ~3.5-3.7 GB vs upstream's ~6.2 GB. Backup cells remain ~623 MB (4 cells) and are shared across slots.
+**Note:** Tape is allocated per-slot (not shared), following old v0.3.2 pattern where each slot gets its own `dflash_tape_gpu` instance. For `n_parallel=4`, total tape = ~340 MB (fused) or ~468 MB (non-fused). This increases total DFlash overhead from the previous ~2.1 GB estimate to ~2.5 GB but still saves ~3.5-3.7 GB vs upstream's ~6.2 GB. Backup cells remain ~623 MB (4 cells) and are shared across slots.
 
 ---
 
@@ -238,7 +238,7 @@ The old v0.3.2 used `mem_size = 2 * n_parallel = 8` total cells (4 normal + 4 ba
 ```
 1. Parse --beefix-dflash-custom flag
 2. Override n_rs_seq = 0 for DFlash
-3. Construct recurrent memory with n_backup_cells = n_parallel * 2
+3. Construct recurrent memory with n_backup_cells = n_parallel
 4. Allocate GPU tape with device-aware placement
 5. Initialize replay graph context and scheduler
 ```
@@ -380,7 +380,7 @@ common_context_seq_rm() removes rejected KV beyond n_accepted.
 
 | Allocation | When | Size | Frequency |
 |-----------|------|------|-----------|
-| GPU tape (per slot) | Server init | ~85 MB/slot (~340 MB for 4 slots) SPOT FIX | Once per slot |
+| GPU tape (per slot) | Server init | ~85 MB/slot (~340 MB for 4 slots) | Once per slot |
 | Backup cells | Server init | ~623 MB | Once (shared) |
 | Replay graph context | Server init | ~1-2 MB | Once per slot |
 | Per-cycle tensors | Each cycle | Views (no allocation) | Every cycle |
@@ -400,7 +400,7 @@ common_context_seq_rm() removes rejected KV beyond n_accepted.
 | Hidden-state capture | Current upstream mechanism |
 | **Total** | **~6,187 MB** |
 
-#### C.7.2 Custom DFlash Overhead (Revised) SPOT FIX (2026-08-08): Tape is per-slot, so for n_parallel=4: tape = ~340 MB (fused) or ~468 MB (non-fused).
+#### C.7.2 Custom DFlash Overhead (Revised)
 
 **CORRECTION (2026-08-08):** Tape size ~85-117 MB per slot, backup cells ~623 MB (4 cells, shared). For n_parallel=4 slots, total tape = ~340-468 MB.
 
@@ -421,7 +421,7 @@ common_context_seq_rm() removes rejected KV beyond n_accepted.
 |-----------|-------------|
 | RS snapshot buffer (n_rs_seq=8 → 0) | 4,788 MB |
 
-#### C.7.4 Added Allocations SPOT FIX (2026-08-08): Tape now accounts for n_parallel=4 slots.
+#### C.7.4 Added Allocations
 
 | Component | Size Added |
 |-----------|-----------|
@@ -432,7 +432,7 @@ common_context_seq_rm() removes rejected KV beyond n_accepted.
 | **Total added (fused)** | **~971 MB** |
 | **Total added (non-fused)** | **~1,099 MB** |
 
-#### C.7.5 Net VRAM Savings SPOT FIX (2026-08-08): Recalculated with per-slot tape.
+#### C.7.5 Net VRAM Savings
 
 | Metric | Value |
 |--------|-------|
@@ -444,7 +444,7 @@ common_context_seq_rm() removes rejected KV beyond n_accepted.
 | **Savings % (fused)** | **80%** |
 | **Savings % (non-fused)** | **77%** |
 
-**Note (SPOT FIX 2026-08-08):** The revised design saves ~3.6-3.8 GB VRAM vs current upstream. While lower than the previous ~4.0 GB estimate, this is due to tape being per-slot (not shared) — each of the 4 parallel slots gets its own ~85-117 MB tape allocation. The per-slot tape values (85-117 MB) and shared backup cells (~623 MB) remain unchanged. The revised design still eliminates the ~6.5 GB CPU RAM requirement and ~26 ms PCIe transfer overhead, making it significantly better in practice.
+**Note:** The revised design saves ~3.6-3.8 GB VRAM vs current upstream. While lower than the previous ~4.0 GB estimate, this is due to tape being per-slot (not shared) — each of the 4 parallel slots gets its own ~85-117 MB tape allocation. The per-slot tape values (85-117 MB) and shared backup cells (~623 MB) remain unchanged. The revised design still eliminates the ~6.5 GB CPU RAM requirement and ~26 ms PCIe transfer overhead, making it significantly better in practice.
 
 ---
 
