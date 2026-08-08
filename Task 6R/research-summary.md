@@ -502,3 +502,62 @@ The old v0.3.2 implementation captures the GDN intermediates at a DIFFERENT poin
 | `plans/dflash-solutions/task6r-part1-hidden-state-and-cross-ring.md` | Hidden-state capture + GPU cross ring analysis |
 | `plans/dflash-solutions/task6r-part2-recurrent-tape-mechanics.md` | Recurrent tape dimensions and size calculation |
 | `plans/dflash-solutions/task6r-part3-tape-replay-and-rollback.md` | Replay/rollback mechanics |
+| `plans/dflash-solutions/task6r-correction-part1-dimensions.md` | Dimension correction using actual GGUF metadata |
+| `plans/dflash-solutions/task6r-correction-part2-backup-cells.md` | Backup cell necessity investigation |
+| `plans/dflash-solutions/task6r-correction-final-conclusion.md` | Final conclusion with corrected budget |
+
+---
+
+## Research Phase 6R Correction Pass: Dimension and Backup Cell Corrections (COMPLETE)
+
+**Started:** 2026-08-08 (after Task 6R initial completion)
+**Trigger:** Discovery of actual Qwen3.6-27B GGUF metadata revealing all previous dimension assumptions were wrong
+
+### Why This Correction
+
+The Task 6R investigation used incorrect SSM dimensions carried over from Qwen3.5 documentation and flawed derivations. The actual Qwen3.6-27B GGUF metadata shows dramatically different values, requiring correction of tape size, backup cell budget, and total auxiliary VRAM.
+
+### New Evidence: Actual Qwen3.6-27B GGUF Metadata
+
+| GGUF Key | Actual Value | Old Assumed | Impact |
+|----------|-------------|-------------|--------|
+| `ssm_d_state` | **128** | 256 (Qwen3.5) / 1536 (derived) | k/v tensor S dimension 2x-12x smaller |
+| `ssm_n_group` | **16** | 1 (fused) / 8 (non-fused) | H_k 16x larger (fused) |
+| `ssm_dt_rank` | **48** | 8 | H_v 6x larger |
+| `ssm_d_inner` | **6144** | 12288 | d_inner 2x smaller |
+
+### Key Corrections
+
+| Metric | Before Correction | After Correction | Change |
+|--------|------------------|------------------|--------|
+| Tape size (fused) | ~134 MB | **~85 MB** | -37% |
+| Tape size (non-fused) | ~186 MB | **~117 MB** | -37% |
+| Backup cells | ~1,246 MB (8 cells) | **~612 MB (4 cells)** | -51% |
+| Total auxiliary | ~1.53-1.57 GB | **~897 MB** | -42% |
+| Expected total VRAM | ~22.0 GB | **~20.2 GB** | -1.8 GB |
+| VRAM savings vs upstream | ~54-55% | **~84-85%** | +30 percentage points |
+
+### Why Backup Cells Were Overestimated
+
+The 6R blueprint used `n_backup_cells = 2 * n_parallel = 8` extra cells. Old v0.3.2 only used `n_backup_cells = n_parallel = 4` (one per slot). Each backup cell = ~153 MB (R row + S row at F32). The correction halves backup VRAM from ~1,246 MB to ~612 MB.
+
+### Why Tape Was Overestimated
+
+The ~134-186 MB estimate was based on `ssm_d_state = 1536` derived from incorrect `d_inner=12288` and `dt_rank=8` values. Actual `ssm_d_state = 128` makes k and v tensors 12x smaller in the S dimension, partially offset by H_v being 6x larger (48 vs 8).
+
+### Correction Documents Created
+
+| File | Purpose |
+|------|---------|
+| `plans/dflash-solutions/task6r-correction-part1-dimensions.md` | Dimension correction using actual GGUF metadata |
+| `plans/dflash-solutions/task6r-correction-part2-backup-cells.md` | Backup cell necessity investigation |
+| `plans/dflash-solutions/task6r-correction-final-conclusion.md` | Final conclusion with all 8 answers |
+
+### Impact on Revised Blueprint
+
+Both [`task6r-revised-blueprint-part2.md`](plans/dflash-solutions/task6r-revised-blueprint-part2.md) and [`task6r-revised-blueprint-part3.md`](plans/dflash-solutions/task6r-revised-blueprint-part3.md) should be updated with corrected figures:
+- Tape: ~85-117 MB instead of ~134-186 MB
+- Backup cells: ~612 MB (4 cells) instead of ~1,246 MB (8 cells)
+- Total auxiliary: ~897 MB instead of ~1.53-1.57 GB
+- VRAM savings: 84-85% instead of ~54-55%
+- Total expected VRAM: ~20.2 GB instead of ~22.0 GB

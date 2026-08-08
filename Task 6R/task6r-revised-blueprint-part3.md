@@ -358,7 +358,7 @@ The custom mode path MUST fail safely to checkpoint rollback. The checkpoint is 
 |---------|--------------|-----------|---------------|
 | T1 | No DFlash | Baseline generation | Correct output, no errors |
 | T2 | Stock DFlash (no `--beefix-dflash-custom`) | Stock DFlash unchanged | Correct output, ~6.2 GB overhead |
-| T3 | Custom mode, basic | Custom mode starts and generates | Correct output, ~2.9 GB overhead |
+| T3 | Custom mode, basic | Custom mode starts and generates | Correct output, **~2.1 GB overhead** |
 | T4 | Custom mode, K=0 acceptance | Zero acceptance handling | Correct output, no crash |
 | T5 | Custom mode, K=1 acceptance | Single-token replay | Output matches T2 |
 | T6 | Custom mode, K=n_draft-1 | Late partial acceptance | Output matches T2 |
@@ -411,9 +411,9 @@ build/bin/llama-server -m qwen3.6-27b.gguf \
 
 **Expected:**
 - `n_rs_seq = 0`
-- Backup cells allocated: `n_backup_cells = 8`
-- GPU tape allocated: ~134 MB (fused) or ~186 MB (non-fused)
-- VRAM ~21.5 GB (model + ~2.9 GB DFlash overhead)
+- Backup cells allocated: `n_backup_cells = 4` **CORRECTED** (was 8, old v0.3.2 used n_parallel=4)
+- GPU tape allocated: ~85 MB (fused) or ~117 MB (non-fused) **CORRECTED** (was ~134-186 MB)
+- VRAM ~20.2 GB (model + ~2.1 GB DFlash overhead) **CORRECTED** (was ~21.5 GB)
 - Generated tokens match G2 exactly (same prompt, seed, sampling)
 
 #### G4-G7: Acceptance Pattern Tests
@@ -429,11 +429,13 @@ Use controlled test prompts that produce known acceptance patterns. Compare outp
 
 ### G.4 Speculative Depth Tests
 
+**CORRECTION (2026-08-08):** Tape sizes updated from S=1536 to S=128, H_v=48, conv_ch=10,240. Per-token fused tape = ~74 KB per layer (was ~116 KB).
+
 | Test | n_draft_max | Expected Tape Size | Expected Behavior |
 |------|------------|-------------------|-------------------|
-| G8 | 4 | ~54 MB (fused) | Smaller tape, faster |
-| G3 | 8 | ~108 MB (fused) | Default |
-| G9 | 15 | ~195 MB (fused) | Larger tape |
+| G8 | 4 | ~22 MB (fused) | Smaller tape, faster |
+| G3 | 8 | ~44 MB (fused) | Default |
+| G9 | 15 | ~82 MB (fused) | Larger tape |
 
 ### G.5 Context Size Tests
 
@@ -462,11 +464,11 @@ nvidia-smi --query-gpu=memory.used --format=csv,noheader
 
 # Calculate difference:
 # Stock DFlash: ~24,800 MB
-# Custom mode: ~21,500 MB
-# Savings: ~3,300 MB
+# Custom mode: ~20,200 MB
+# Savings: ~4,600 MB
 ```
 
-**Pass criteria:** Custom mode VRAM is at least 2.5 GB lower than stock DFlash.
+**Pass criteria:** Custom mode VRAM is at least 3.5 GB lower than stock DFlash. **CORRECTION (2026-08-08):** Updated from 2.5 GB to 3.5 GB to reflect corrected ~4 GB savings.
 
 ### G.8 Performance Benchmark
 

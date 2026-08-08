@@ -27,11 +27,11 @@ The following facts were verified against actual source code (old v0.3.2 + curre
 |---|---------|-------------------|
 | 1 | **Old v0.3.2 GPU cross ring is ~200 MB** for hidden-state capture (5 layers × 1024 slots × 5120 embd × 4B × 2 for ring + staging). | [`old-versions/.../cross-ring-interleave.cu:172-175`](old-versions/beellama.cpp-preview-v0.3.2/ggml/src/ggml-cuda/cross-ring-interleave.cu:172), runtime log evidence |
 | 2 | **Old v0.3.2 GPU tape stores rank-factored GDN intermediates**, NOT full S-state tensors. The 5 captured tensors per layer are: k, v, gate, beta, qkv_mixed. | [`old-versions/.../llama-context.h:118-160`](old-versions/beellama.cpp-preview-v0.3.2/src/llama-context.h:118), [`old-versions/.../llama-context.cpp:2267-2286`](old-versions/beellama.cpp-preview-v0.3.2/src/llama-context.cpp:2267) |
-| 3 | **Old tape tensor dimensions for Qwen3.6 27B (fused GDN):** k=[256,1,25], v=[256,8,25], gate=[1,8,25], beta=[1,8,25], qkv=[12768,25]. Total per layer: ~377K elements = ~1.44 MB F32. | [`old-versions/.../llama-context.cpp:2413-2479`](old-versions/beellama.cpp-preview-v0.3.2/src/llama-context.cpp:2413) |
-| 4 | **Old GPU tape total: ~70 MB** for 48 recurrent layers, 1 slot, 25 max tokens (fused GDN). ~74 MB for non-fused. | Calculated from `allocate_tape_gpu()` tensor dimensions |
-| 5 | **Total old DFlash GPU memory: ~270 MB** (200 MB ring + 70 MB tape). | Sum of Parts 6R.1 + 6R.2 findings |
-| 6 | **Task 5's ~6.5 GiB tape estimate was WRONG.** The error came from assuming full S-state capture (n_embd_s = 786,432 or larger) rather than rank-factored GDN intermediates (~377K elements per layer per token). | [`task5-part2-current-delta-replay.md:67-79`](plans/dflash-solutions/task5-part2-current-delta-replay.md:67) used incorrect dimensions (S_k=S_v=128, H_k=32, H_v=32) |
-| 7 | **Corrected tape size with actual Qwen3.6 hyperparameters:** ~134 MB (fused GDN) or ~186 MB (non-fused) for 48 layers, 25 tokens. The higher estimate accounts for `ssm_d_state = 1536` (derived from S_k==S_v assertion) vs the 256 assumed in 6R.2. | [`task6r-part4-discrepancy-and-current-mapping.md:162-208`](plans/dflash-solutions/task6r-part4-discrepancy-and-current-mapping.md:162) |
+| 3 | **Old tape tensor dimensions for Qwen3.6 27B (fused GDN):** k=[128,16,25], v=[128,48,25], gate=[1,48,25], beta=[1,48,25], qkv=[10240,25]. Total per layer: ~463K elements = ~1.77 MB F32. **CORRECTION (2026-08-08):** Updated from k=[256,1,25], v=[256,8,25] using actual GGUF metadata (S=128, H_k=16, H_v=48). | [`old-versions/.../llama-context.cpp:2413-2479`](old-versions/beellama.cpp-preview-v0.3.2/src/llama-context.cpp:2413), [`task6r-correction-part1-dimensions.md`](plans/dflash-solutions/task6r-correction-part1-dimensions.md) |
+| 4 | **Corrected GPU tape total: ~85 MB (fused) / ~117 MB (non-fused)** for 48 recurrent layers, 1 slot, 25 max tokens. **CORRECTION (2026-08-08):** Updated from ~70 MB (old wrong dimensions) and ~134 MB (S=1536 derivation). Actual GGUF values give ~85 MB fused. | Calculated from actual GGUF metadata: S=128, H_k=16/48, H_v=48, conv_ch=10240 |
+| 5 | **Total DFlash GPU memory: ~285-317 MB** (200 MB ring + 85-117 MB tape). **CORRECTION (2026-08-08):** Updated from ~270-400 MB range. | Sum of Parts 6R.1 + corrected 6R.2 findings |
+| 6 | **Task 5's ~6.5 GiB tape estimate was WRONG.** The error came from assuming full S-state capture rather than rank-factored GDN intermediates (~463K elements per layer per token). | [`task5-part2-current-delta-replay.md:67-79`](plans/dflash-solutions/task5-part2-current-delta-replay.md:67) used incorrect dimensions (S_k=S_v=128, H_k=32, H_v=32) |
+| 7 | **Corrected tape size with actual Qwen3.6 GGUF metadata:** ~85 MB (fused GDN) or ~117 MB (non-fused) for 48 layers, 25 tokens. **CORRECTION (2026-08-08):** Updated from ~134-186 MB. The previous derivation used `ssm_d_state = 1536` based on incorrect `d_inner/dt_rank` values. Actual GGUF shows `ssm_d_state = 128`, `ssm_dt_rank = 48`, `ssm_d_inner = 6144`, satisfying S_k==S_v as `128 == 6144/48 = 128`. | [`task6r-correction-part1-dimensions.md`](plans/dflash-solutions/task6r-correction-part1-dimensions.md) |
 | 8 | **Current upstream CAN capture the same compact intermediates.** The graph nodes exist with matching callback names: `k_conv_predelta-{il}`, `v_conv_predelta-{il}`, `gate-{il}`, `beta_sigmoid-{il}`, `linear_attn_qkv_mixed-{il}`. | [`src/models/qwen35.cpp:446-450`](src/models/qwen35.cpp:446), [`src/models/qwen35.cpp:338-457`](src/models/qwen35.cpp:338) |
 | 9 | **GDN computation is IDENTICAL between old and current.** Same CUDA kernel ([`gated_delta_net.cu:63-158`](ggml/src/ggml-cuda/gated_delta_net.cu:63)), same math, same beta convention (post-sigmoid). | Kernel comparison in 6R.4 Part B |
 | 10 | **The only gap is the capture mechanism.** Old had graph-embedded `ggml_cpy` operations in `qwen35.cpp:564-579`; current has no equivalent. Re-implementing requires ~200 lines for the capture mechanism alone. | [`old-versions/.../qwen35.cpp:564-579`](old-versions/beellama.cpp-preview-v0.3.2/src/models/qwen35.cpp:564) vs [`src/models/qwen35.cpp:450`](src/models/qwen35.cpp:450) |
@@ -44,7 +44,7 @@ The following facts were verified against actual source code (old v0.3.2 + curre
 
 2. **Task 5's design was on the right track but used wrong tensor dimensions.** The conceptual approach (capture k/v/g/b intermediates, replay via GDN) was correct. The error was in assuming the tape captured full S-state tensors rather than compact rank-factored components. This led to the ~6.5 GiB estimate and the conclusion that "CPU tape is the only viable strategy."
 
-3. **The revised design should use GPU-native tape (like old v0.3.2), NOT CPU tape.** With corrected dimensions (~134-186 MB GPU tape), the total DFlash GPU overhead is ~270-400 MB — dramatically better than the previous blueprint's CPU tape approach which required ~6.5 GB CPU RAM plus ~26 ms PCIe transfer overhead per cycle.
+3. **The revised design should use GPU-native tape (like old v0.3.2), NOT CPU tape.** With corrected dimensions (~85-117 MB GPU tape), the total DFlash GPU overhead is ~285-317 MB — dramatically better than the previous blueprint's CPU tape approach which required ~6.5 GB CPU RAM plus ~26 ms PCIe transfer overhead per cycle. **CORRECTION (2026-08-08):** Updated tape size from ~134-186 MB to ~85-117 MB using actual GGUF metadata.
 
 4. **The implementation scope is ~400-700 lines of new code** (capture mechanism + replay integration), NOT the ~900+ lines estimated in the previous blueprint (which included CPU tape transfer logic, CUDA replay kernel, etc.).
 
@@ -72,10 +72,10 @@ The following facts were verified against actual source code (old v0.3.2 + curre
 |--------|-----------|---------------------------|----------------|
 | **State Capture** | Rank-factored GDN intermediates (k, v, gate, beta, qkv_mixed) via graph-embedded `ggml_cpy` in `qwen35.cpp` | Full S-state tensors (k_in, v_in, g_in, b_in) via graph-embedded `ggml_cpy` in `delta-net-base.cpp` | Rank-factored GDN intermediates via graph-embedded `ggml_cpy` in `qwen35.cpp` (same as old) |
 | **Hidden-State Ring** | GPU cross ring: ~200 MB (5 layers × cross_ctx × 5120 embd) | Not applicable (current upstream uses different hidden-state mechanism) | Current upstream hidden-state capture (no change needed) |
-| **Recurrent Tape** | GPU tape: ~70-186 MB (48 layers × 25 tokens × rank-factored intermediates, F32, device-aware placement) | CPU tape: ~6.5 GB (48 layers × 15 tokens × full S-state tensors, F32, CPU RAM) | GPU tape: ~70-186 MB (same dimensions as old, device-aware placement) |
+| **Recurrent Tape** | GPU tape: ~85-117 MB (48 layers × 25 tokens × rank-factored intermediates, F32, device-aware placement) | CPU tape: ~6.5 GB (48 layers × 15 tokens × full S-state tensors, F32, CPU RAM) | GPU tape: ~85-117 MB (same dimensions as old, device-aware placement) |
 | **R/S State Storage** | Backup cells (~150 MB/slot) — recurrent-only copy to backup sequences | Extended tensor rows (backup cells, ~150 MB/slot) | Extended tensor rows (backup cells, ~150 MB/slot) — SAME as Task 5 |
 | **Rollback Mechanism** | Restore backup + tape replay (GDN-only forward pass for accepted tokens) | Restore backup + GDN replay with CPU tape data (requires PCIe transfers) | Restore backup + GDN replay with GPU tape data (no PCIe transfers) |
-| **VRAM Overhead (Total)** | ~270-450 MB (200 MB ring + 70-186 MB tape + backup cells) | ~2,598 MB GPU + ~6,552 MB CPU (RS base + backup + draft model; tape on CPU) | ~270-450 MB GPU (tape + backup cells + base RS; no CPU tape) |
+| **VRAM Overhead (Total)** | ~285-317 MB (200 MB ring + 85-117 MB tape + backup cells) | ~2,598 MB GPU + ~6,552 MB CPU (RS base + backup + draft model; tape on CPU) | ~285-317 MB GPU (tape + backup cells + base RS; no CPU tape) |
 | **CPU RAM Overhead** | ~400 MB (CPU ring fallback) + minimal tape fallback | ~6,552 MB (tape buffer) | ~0 MB (tape on GPU; minimal fallback only) |
 | **PCIe Transfers** | ~0 MB/cycle (GPU-native tape) | ~13 GB/cycle (6.5 GB GPU→CPU capture + 6.5 GB CPU→GPU replay) | ~0 MB/cycle (GPU-native tape) |
 | **Compute Overhead** | GDN replay only (48 layers × K accepted tokens × rank-1 update) | GDN replay only + PCIe transfer time (~26 ms) | GDN replay only (48 layers × K accepted tokens × rank-1 update) |
@@ -93,15 +93,17 @@ All numbers for Qwen3.6-27B on RTX 3090 (24 GB):
 | Component | Old v0.3.2 | Current Upstream | Task 5 Blueprint | Revised Design |
 |-----------|-----------|-----------------|-----------------|---------------|
 | RS buffer (R + S) | 598 MB (base only) | 5,387 MB (n_rs_seq=8) | 598 MB (n_rs_seq=0) | 598 MB (n_rs_seq=0) |
-| Backup cells | ~150 MB/slot | 0 | ~1,200 MB (8 cells) | ~150 MB/slot |
-| Tape (GPU) | ~70-186 MB | 0 | 0 | ~70-186 MB |
+| Backup cells | ~150 MB/slot | 0 | ~612 MB (4 cells) | ~612 MB (4 cells) |
+| Tape (GPU) | ~85-117 MB | 0 | 0 | ~85-117 MB |
 | Tape (CPU) | 0 (fallback only) | 0 | 6,552 MB | 0 |
 | Hidden-state ring | ~200 MB | Current upstream mechanism | Current upstream mechanism | Current upstream mechanism |
 | Draft model | ~800 MB | ~800 MB | ~800 MB | ~800 MB |
-| **DFlash overhead** | **~1,220-1,400 MB** | **~6,187 MB** | **~2,598 MB GPU** | **~1,620-1,800 MB** |
-| **Total (with model)** | **~20 GB** | **~24.8 GB** | **~22 GB GPU + 6.5 GB CPU** | **~20.2 GB** |
-| **VRAM saved vs current** | **~4.6 GB** | — | **~3.6 GB** | **~4.4 GB** |
-| **Savings %** | **74%** | — | **58%** | **71%** |
+| **DFlash overhead** | **~1,193-1,225 MB** | **~6,187 MB** | **~2,010 MB GPU** | **~2,095-2,127 MB** |
+| **Total (with model)** | **~19.8 GB** | **~24.8 GB** | **~21.5 GB GPU + 6.5 GB CPU** | **~20 GB** |
+| **VRAM saved vs current** | **~5 GB** | — | **~4.2 GB** | **~4.1-4.1 GB** |
+| **Savings %** | **81%** | — | **68%** | **66-67%** |
+
+**CORRECTION (2026-08-08):** Updated tape size from ~70-186 MB to ~85-117 MB, and backup cells from ~1,200 MB (8 cells) to ~612 MB (4 cells) based on actual GGUF metadata and old v0.3.2 analysis. See [`task6r-correction-part1-dimensions.md`](plans/dflash-solutions/task6r-correction-part1-dimensions.md) and [`task6r-correction-part2-backup-cells.md`](plans/dflash-solutions/task6r-correction-part2-backup-cells.md).
 
 ### B.3 Performance Comparison
 
@@ -117,16 +119,18 @@ All numbers for Qwen3.6-27B on RTX 3090 (24 GB):
 
 #### Why Revised Design Uses GPU Tape (Not CPU Tape)
 
-The previous blueprint concluded "CPU tape is the only viable strategy" because Task 5 estimated ~6.5 GiB for the GPU tape. The revised investigation proved this estimate was based on incorrect tensor dimensions. The actual tape stores rank-factored GDN intermediates (~70-186 MB), making GPU tape the clear choice:
+The previous blueprint concluded "CPU tape is the only viable strategy" because Task 5 estimated ~6.5 GiB for the GPU tape. The revised investigation proved this estimate was based on incorrect tensor dimensions. The actual tape stores rank-factored GDN intermediates (~85-117 MB), making GPU tape the clear choice:
 
 | Factor | GPU Tape (Revised) | CPU Tape (Previous) |
 |--------|-------------------|---------------------|
-| VRAM impact | +70-186 MB | +0 MB (but +6.5 GB CPU RAM) |
+| VRAM impact | +85-117 MB | +0 MB (but +6.5 GB CPU RAM) |
 | PCIe transfers | 0 per cycle | ~13 GB per cycle (6.5 GB each direction) |
 | Transfer latency | 0 ms | ~26 ms per cycle |
 | Replay speed | ~0.1 ms (GPU-native) | ~26 ms (PCIe-bound) |
-| Total DFlash overhead | ~270-450 MB GPU | ~2,598 MB GPU + 6,552 MB CPU |
+| Total DFlash overhead | ~285-317 MB GPU | ~2,598 MB GPU + 6,552 MB CPU |
 | Complexity | Simple (graph copy) | Complex (transfer orchestration) |
+
+**CORRECTION (2026-08-08):** Updated tape size from ~70-186 MB to ~85-117 MB using actual GGUF metadata.
 
 #### Why Revised Design Captures in `qwen35.cpp` (Not `delta-net-base.cpp`)
 

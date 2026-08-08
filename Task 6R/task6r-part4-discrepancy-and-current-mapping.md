@@ -20,10 +20,12 @@ For 8 draft tokens: 18.9 MB total tape
 ```
 
 This Task 5 estimate used S_k=S_v=128 and H_k=32, H_v=32, which does NOT match Qwen3.6 27B actual hyperparameters. The correct values are:
-- `S_k = ssm_d_state = 256`
-- `S_v = ssm_d_state = 256`
-- `H_k = ssm_n_group = 1` (fused GDN) or `8` (non-fused)
-- `H_v = ssm_dt_rank = 8`
+- `S_k = ssm_d_state = 128`
+- `S_v = ssm_d_state = 128`
+- `H_k = ssm_n_group = 16` (fused GDN) or `48` (non-fused)
+- `H_v = ssm_dt_rank = 48`
+
+**CORRECTION (2026-08-08):** The values above were previously listed as S_k=256, H_k=1/8, H_v=8. Those were carried over from old Qwen3.5 documentation and v0.3.2 code comments. The actual Qwen3.6 GGUF metadata shows `qwen35.ssm.state_size=128`, `qwen35.ssm.group_count=16`, `qwen35.ssm.time_step_rank=48`. See [`task6r-correction-part1-dimensions.md`](task6r-correction-part1-dimensions.md) for the full analysis.
 
 The ~6.5 GiB estimate likely came from a DIFFERENT calculation that assumed:
 1. Full S-state tensors (`[S_v, S_v, H_v]` = `[256, 256, 8]` = 524,288 elements per head group) rather than rank-factored intermediates.
@@ -32,122 +34,48 @@ The ~6.5 GiB estimate likely came from a DIFFERENT calculation that assumed:
 
 ### A.2 Actual Current Upstream Tensor Dimensions
 
-From the current graph builder at [`src/models/qwen35.cpp:346-349`](src/models/qwen35.cpp:346):
+**CORRECTION (2026-08-08):** The entire Section A.2 analysis below was based on incorrect hyperparameter assumptions (`ssm_d_state=256`, `ssm_d_inner=12288`, `ssm_dt_rank=8`, `ssm_n_group=1/8`). These values were carried over from old Qwen3.5 documentation and v0.3.2 code comments, not verified against the actual Qwen3.6 GGUF. The **actual GGUF metadata** shows:
+
+| GGUF Key | Actual Value | Old Assumed Value |
+|----------|-------------|-------------------|
+| `qwen35.ssm.state_size` (`ssm_d_state`) | **128** | 256 |
+| `qwen35.ssm.group_count` (`ssm_n_group`) | **16** | 1 (fused) / 8 (non-fused) |
+| `qwen35.ssm.time_step_rank` (`ssm_dt_rank`) | **48** | 8 |
+| `qwen35.ssm.inner_size` (`ssm_d_inner`) | **6144** | 12288 |
+
+With these actual values, the `S_k == S_v` assertion is satisfied: `head_k_dim = ssm_d_state = 128` and `head_v_dim = d_inner / num_v_heads = 6144 / 48 = 128`. So `128 == 128` — **SATISFIED**. No need for `ssm_d_state = 1536`.
+
+The corrected tensor dimensions from the current graph builder at [`src/models/qwen35.cpp:346-349`](src/models/qwen35.cpp:346):
 
 ```cpp
-const int64_t head_k_dim   = hparams.ssm_d_state;   // 256
-const int64_t num_k_heads  = hparams.ssm_n_group;   // 1 (fused) or 8 (non-fused)
-const int64_t num_v_heads  = hparams.ssm_dt_rank;   // 8
-const int64_t head_v_dim   = d_inner / num_v_heads; // 12288 / 8 = 1536
+const int64_t head_k_dim   = hparams.ssm_d_state;   // 128 (ACTUAL)
+const int64_t num_k_heads  = hparams.ssm_n_group;   // 16 (fused) or 48 (non-fused)
+const int64_t num_v_heads  = hparams.ssm_dt_rank;   // 48
+const int64_t head_v_dim   = d_inner / num_v_heads; // 6144 / 48 = 128
 ```
 
-Wait -- `head_v_dim = d_inner / num_v_heads`. For Qwen3.6 27B, `ssm_d_inner = 12288` and `ssm_dt_rank = 8`, so `head_v_dim = 1536`. But the GDN state S is `[head_v_dim, head_v_dim, num_v_heads]` = `[1536, 1536, 8]`.
-
-However, looking at the GDN input assertions at [`src/models/delta-net-base.cpp:33-43`](src/models/delta-net-base.cpp:33):
+And from the model loader at [`src/models/qwen35.cpp:58-63`](src/models/qwen35.cpp:58):
 ```cpp
-GGML_ASSERT(S_k == S_v);
+const int64_t head_k_dim = hparams.ssm_d_state;   // 128
+const int64_t head_v_dim = hparams.ssm_d_state;   // 128 (SAME as head_k_dim)
+const int64_t n_k_heads  = hparams.ssm_n_group;   // 16
+const int64_t n_v_heads  = hparams.ssm_dt_rank;   // 48
 ```
 
-And from [`src/models/qwen35.cpp:425-427`](src/models/qwen35.cpp:425), the k/v tensors passed to `build_recurrent_attn()` are:
-- `k_conv`: `[head_k_dim, num_k_heads, n_seq_tokens, n_seqs]` = `[256, 1 or 8, n_tokens, n_seqs]`
-- `v_conv`: `[head_v_dim, num_v_heads, n_seq_tokens, n_seqs]` = `[1536, 8, n_tokens, n_seqs]`
+Both sources agree: `head_k_dim == head_v_dim == 128`. The `S_k == S_v` assertion at [`src/models/delta-net-base.cpp:33`](src/models/delta-net-base.cpp:33) is satisfied.
 
-But wait -- the assertion `S_k == S_v` at [`delta-net-base.cpp:33`](src/models/delta-net-base.cpp:33) means `head_k_dim == head_v_dim`. For Qwen3.6, `head_k_dim = ssm_d_state = 256` but `head_v_dim = d_inner / num_v_heads = 1536`. That would fail the assertion.
+**Derived values with actual GGUF metadata:**
+- `conv_channels = d_inner + 2 * ssm_n_group * ssm_d_state = 6144 + 2*16*128 = 10,240`
+- `n_embd_s = ssm_d_state * ssm_d_inner = 128 * 6144 = 786,432`
+- S-state shape: `[128, 128, 48]` = 786,432 elements = 3.0 MB F32 per layer
 
-**Re-reading the code more carefully:**
-
-At [`src/models/qwen35.cpp:346-349`](src/models/qwen35.cpp:346):
-```cpp
-const int64_t head_k_dim   = hparams.ssm_d_state;   // 256
-const int64_t num_k_heads  = hparams.ssm_n_group;   // 1
-const int64_t num_v_heads  = hparams.ssm_dt_rank;   // 8
-const int64_t head_v_dim   = d_inner / num_v_heads; // 12288 / 8 = 1536
-```
-
-At [`src/models/delta-net-base.cpp:29-30`](src/models/delta-net-base.cpp:29):
-```cpp
-const int64_t S_v = v->ne[0];
-const int64_t H_v = v->ne[1];
-```
-
-At [`src/models/delta-net-base.cpp:33`](src/models/delta-net-base.cpp:33):
-```cpp
-GGML_ASSERT(S_k == S_v);
-```
-
-This means `v->ne[0] == k->ne[0]`. Looking at how v is constructed at [`src/models/qwen35.cpp:419-423`](src/models/qwen35.cpp:419):
-```cpp
-ggml_tensor * v_conv = ggml_view_4d(ctx0, conv_qkv_mix, head_v_dim, num_v_heads, n_seq_tokens, n_seqs, ...);
-```
-
-And k at [`src/models/qwen35.cpp:413-417`](src/models/qwen35.cpp:413):
-```cpp
-ggml_tensor * k_conv = ggml_view_4d(ctx0, conv_qkv_mix, head_k_dim, num_k_heads, n_seq_tokens, n_seqs, ...);
-```
-
-For the assertion `S_k == S_v` to pass, `head_k_dim == head_v_dim`. This means `ssm_d_state == d_inner / num_v_heads`. For Qwen3.6 27B: `256 == 12288 / 8 = 1536`. That's FALSE.
-
-**Resolution:** The assertion `S_k == S_v` is in `build_delta_net_chunking()` (the chunking/prefill path), NOT in `build_recurrent_attn()`. The tensor dimensions at the GDN input are determined by what the model builder passes. The GDN kernel at [`gated_delta_net.cu:63-158`](ggml/src/ggml-cuda/gated_delta_net.cu:63) uses `S_v = v->ne[0]` for the value dimension and `S_k = k->ne[0]` for the key dimension, and the state S is `[S_v, S_v, H_v]`. The assertion `S_k == S_v` in `build_delta_net_chunking()` enforces that the chunking path requires equal dimensions, but the main AR path may allow different dimensions.
-
-Looking at the GDN op definition at [`ggml/src/ggml.c:6449-6450`](ggml/src/ggml.c:6449):
-```cpp
-const int64_t S_v      = v->ne[0];
-const int64_t H        = v->ne[1];
-```
-
-And state validation at [`ggml/src/ggml.c:6459-6461`](ggml/src/ggml.c:6459):
-```cpp
-GGML_ASSERT(state->ne[0] == S_v);
-GGML_ASSERT(state->ne[1] == S_v);
-GGML_ASSERT(state->ne[2] == H);
-```
-
-The state S is `[S_v, S_v, H]` where `S_v = v->ne[0]`. For Qwen3.6, `S_v = head_v_dim = 1536` and `H = num_v_heads = 8`. The full S-state per layer = `1536 * 1536 * 8 = 18,874,368` elements = 75.5 MB F32.
-
-But the k tensor has `S_k = head_k_dim = 256`. The GDN kernel computes `S^T @ k` where S is `[S_v, S_v, H]` and k is `[S_k, H_k, T]`. For the matrix multiply to work, `S_v == S_k`. This means the model MUST have `head_k_dim == head_v_dim`, which for Qwen3.6 requires `ssm_d_state == d_inner / ssm_dt_rank`.
-
-**Let me verify with actual Qwen3.6 hyperparameters:**
-
-From the Qwen3.5/3.6 architecture documentation and model files:
-- `ssm_d_state` may actually be `1536` for larger models, not `256`.
-- OR `ssm_d_inner` and `ssm_dt_rank` are such that `d_inner / dt_rank == ssm_d_state`.
-
-Looking at [`src/models/qwen35.cpp:58-63`](src/models/qwen35.cpp:58):
-```cpp
-const int64_t head_k_dim = hparams.ssm_d_state;
-const int64_t head_v_dim = hparams.ssm_d_state;
-const int64_t n_k_heads  = hparams.ssm_n_group;
-const int64_t n_v_heads  = hparams.ssm_dt_rank;
-const int64_t key_dim    = head_k_dim * n_k_heads;
-const int64_t value_dim  = head_v_dim * n_v_heads;
-```
-
-`head_v_dim = hparams.ssm_d_state`, NOT `d_inner / num_v_heads`. The `head_v_dim` in `build_layer_attn_linear()` at line 349 uses `d_inner / num_v_heads`, but this is a LOCAL variable that represents the value head dimension in the conv output. The GDN state dimension `S_v` is derived from `v->ne[0]` which is `head_v_dim = d_inner / num_v_heads`.
-
-For the assertion `S_k == S_v` to pass, we need `ssm_d_state == d_inner / ssm_dt_rank`. If `ssm_d_inner = 12288` and `ssm_dt_rank = 8`, then `d_inner / dt_rank = 1536`, and `ssm_d_state` would need to be 1536.
-
-**The Task 6R.2 document at [`task6r-part2-recurrent-tape-mechanics.md:188-198`](plans/dflash-solutions/task6r-part2-recurrent-tape-mechanics.md:188) lists Qwen3.6 27B hyperparameters:**
-
-| Parameter | Value |
-|-----------|-------|
-| `ssm_d_state` | 256 |
-| `ssm_d_inner` | 12288 |
-| `ssm_dt_rank` | 8 (= num_v_heads) |
-| `ssm_n_group` | 1 (= num_k_heads for fused GDN) |
-
-With these values: `head_k_dim = 256`, `head_v_dim = 12288/8 = 1536`. The assertion `S_k == S_v` would require `256 == 1536`, which fails.
-
-**But the code DOES compile and run.** This means either:
-1. The hyperparameters are different from what Task 6R.2 assumed, OR
-2. The assertion `S_k == S_v` is in a code path that isn't hit for the AR path.
-
-Looking at the code flow: `build_recurrent_attn()` at [`delta-net-base.cpp:527`](src/models/delta-net-base.cpp:527) calls `build_delta_net()` which calls `build_delta_net_chunking()` at [`delta-net-base.cpp:16`](src/models/delta-net-base.cpp:16). The assertion is in `build_delta_net_chunking()`. For the AR path (single token), `n_seq_tokens == 1`, and the chunking path IS used (there's no separate AR-only GDN call in the graph builder -- the GDN kernel handles both cases).
-
-**The answer is that `ssm_d_state` for Qwen3.6 27B is likely NOT 256.** The value 256 was assumed from Qwen3.5 documentation. The actual model file would tell us the true value. Given the assertion `S_k == S_v`, the actual `ssm_d_state` must equal `d_inner / dt_rank = 12288 / 8 = 1536`.
+See [`task6r-correction-part1-dimensions.md`](task6r-correction-part1-dimensions.md) for the complete derivation and source code verification.
 
 ### A.3 Corrected Tape Size Calculation
 
-Using the ACTUAL tensor dimensions from the current graph builder:
+**CORRECTION (2026-08-08):** This section has been completely rewritten using actual Qwen3.6 GGUF metadata. The previous calculation used `ssm_d_state=1536`, `H_k=1/8`, `H_v=8`, and `conv_channels=15,360`, all derived from incorrect assumptions. The corrected values are `ssm_d_state=128`, `H_k=16/48`, `H_v=48`, and `conv_channels=10,240`.
+
+Using the ACTUAL tensor dimensions from the current graph builder with verified GGUF metadata:
 
 **Tensors captured per recurrent layer (same as old v0.3.2):**
 
@@ -157,55 +85,59 @@ Using the ACTUAL tensor dimensions from the current graph builder:
 | v | `v_conv_predelta-{il}` | `[S_v, H_v, 25, 1]` | `S_v * H_v * 25` |
 | gate | `gate-{il}` | `[1, H_v, 25, 1]` | `1 * H_v * 25` |
 | beta | `beta_sigmoid-{il}` | `[1, H_v, 25, 1]` | `1 * H_v * 25` |
-| qkv_mixed | `linear_attn_qkv_mixed-{il}` | `[conv_dim, 25, 1]` | `conv_dim * 25` |
+| qkv_mixed | `linear_attn_qkv_mixed-{il}` | `[conv_channels, 25, 1]` | `conv_channels * 25` |
 
-**With Qwen3.6 27B actual values (assuming `ssm_d_state = 1536` to satisfy `S_k == S_v`):**
+**With Qwen3.6 27B actual values (from GGUF metadata):**
 
 | Parameter | Value |
 |-----------|-------|
-| `S_k = S_v = ssm_d_state` | 1536 (derived from `d_inner/dt_rank`) |
-| `H_k = ssm_n_group` | 1 (fused) or 8 (non-fused) |
-| `H_v = ssm_dt_rank` | 8 |
-| `conv_dim = key_dim*2 + value_dim` | `1536*1*2 + 1536*8 = 3072 + 12288 = 15,360` |
+| `S_k = S_v = ssm_d_state` | **128** |
+| `H_k = ssm_n_group` | **16** (fused) or **48** (non-fused) |
+| `H_v = ssm_dt_rank` | **48** |
+| `conv_channels = d_inner + 2*ssm_n_group*ssm_d_state` | **10,240** |
 
 Per layer per 25 tokens (F32 = 4 bytes):
 
+**Fused GDN (H_k = 16):**
+
 | Tensor | Elements | Bytes |
 |--------|----------|-------|
-| k | `1536 * 1 * 25 = 38,400` | 153,600 |
-| v | `1536 * 8 * 25 = 307,200` | 1,228,800 |
-| gate | `1 * 8 * 25 = 200` | 800 |
-| beta | `1 * 8 * 25 = 200` | 800 |
-| qkv_mixed | `15,360 * 25 = 384,000` | 1,536,000 |
-| **Per layer total** | **729,800** | **2,919,200 (~2.79 MB)** |
+| k | `128 * 16 * 25 = 51,200` | 204,800 |
+| v | `128 * 48 * 25 = 153,600` | 614,400 |
+| gate | `1 * 48 * 25 = 1,200` | 4,800 |
+| beta | `1 * 48 * 25 = 1,200` | 4,800 |
+| qkv_mixed | `10,240 * 25 = 256,000` | 1,024,000 |
+| **Per layer total** | **463,200** | **1,852,800 (~1.77 MB)** |
+
+**Non-Fused GDN (H_k = 48):**
+
+| Tensor | Elements | Bytes |
+|--------|----------|-------|
+| k | `128 * 48 * 25 = 153,600` | 614,400 |
+| v | `128 * 48 * 25 = 153,600` | 614,400 |
+| gate | `1 * 48 * 25 = 1,200` | 4,800 |
+| beta | `1 * 48 * 25 = 1,200` | 4,800 |
+| qkv_mixed | `10,240 * 25 = 256,000` | 1,024,000 |
+| **Per layer total** | **638,400** | **2,537,200 (~2.42 MB)** |
 
 For 48 recurrent layers:
-- **Total = 48 * 2.79 MB = ~133.9 MB**
+- **Fused: Total = 48 * 1.77 MB = ~84.9 MB**
+- **Non-fused: Total = 48 * 2.42 MB = ~116.5 MB**
 
-For non-fused GDN (H_k = 8):
-- k = `1536 * 8 * 25 = 307,200` elements = 1,228,800 bytes
-- Per layer = 2,919,200 + 1,075,200 = ~3.87 MB
-- **Total = 48 * 3.87 MB = ~185.8 MB**
+### A.4 Comparison with Previous Estimates
 
-### A.4 Comparison with Old v0.3.2
+| Estimate | Source | Fused | Non-Fused | Status |
+|----------|--------|-------|-----------|--------|
+| ~70 MB | Old v0.3.2 runtime logs | ~70 MB | ~74 MB | **Wrong dimensions but coincidentally close** — larger S (256) offset by smaller H_v (8 vs 48) |
+| ~134 MB | task6r-part4 (old) | ~134 MB | ~186 MB | **NEEDS CORRECTION** — used S=1536 derived from incorrect d_inner/dt_rank |
+| **~85 MB** | **This correction** | **~85 MB** | **~117 MB** | **CORRECTED with actual GGUF metadata** |
+| ~6.5 GiB | Task 5 | — | — | **Still wrong by ~55-77x** |
 
-| Aspect | Old v0.3.2 (Task 6R.2) | Current Calculation |
-|--------|----------------------|-------------------|
-| S_k = S_v | 256 (assumed) | 1536 (derived from assertion) |
-| H_k | 1 (fused) | 1 (fused) |
-| H_v | 8 | 8 |
-| conv_channels | 12,768 | 15,360 |
-| Per layer (fused) | ~1.44 MB | ~2.79 MB |
-| Total (48 layers) | ~69.5 MB | ~133.9 MB |
+**The old v0.3.2 ~70 MB estimate used wrong dimensions (S=256, H_v=8, H_k=1) but happened to produce a reasonable answer because the errors partially canceled out:** larger S (256 vs 128) was offset by smaller H_v (8 vs 48) and smaller conv_ch (12,768 vs 10,240).
 
-**The discrepancy between old and new calculations is due to `ssm_d_state`.** If the old Task 6R.2 document assumed `ssm_d_state = 256` but the actual model has `ssm_d_state = 1536`, the old tape size was underestimated. The actual tape size depends on the model's true hyperparameters.
+**The ~134-186 MB estimate from the original task6r-part4 does NOT survive.** It needs correction DOWN to ~85-117 MB because the actual `ssm_d_state` is 128 (not 1536), making the k and v tensors 12x smaller in the S dimension. However, H_v is 6x larger (48 vs 8), which partially offsets the reduction.
 
-**However, the ~6.5 GiB estimate from Task 5 is still wrong by a factor of ~49x.** Even with `ssm_d_state = 1536`, the tape is ~134 MB (fused) or ~186 MB (non-fused), not 6.5 GiB. The 6.5 GiB figure likely assumed:
-- Full S-state per token per layer: `1536 * 1536 * 8 = 18,874,368` elements = 75.5 MB per layer per token.
-- For 48 layers and 8 draft tokens: `48 * 75.5 * 8 = 28,732` MB = ~28 GB. That's even more than 6.5 GiB.
-- OR the estimate used wrong dimensions entirely (e.g., assumed H_k=32, H_v=32 as Task 5 did).
-
-**The 6.5 GiB figure was based on incorrect head dimensions (H_k=32, H_v=32) and possibly confusion about whether the tape stores rank-factored intermediates vs. full S-state.** The actual tape stores rank-factored GDN intermediates, giving ~134-186 MB depending on fused vs non-fused GDN.
+**The ~6.5 GiB estimate from Task 5 is wrong by a factor of ~55-77x.** The tape stores rank-factored GDN intermediates (~85-117 MB), not full S-state. Even with the old S=1536 assumption, full S-state would be `1536*1536*8 = 18,874,368` elements per layer = 75.5 MB, which for 48 layers and 8 tokens = ~28 GB, far exceeding 6.5 GiB.
 
 ---
 
@@ -351,20 +283,22 @@ This affects the qkv_mixed shape for tape capture: the current `linear_attn_qkv_
 
 ### C.1 Critical Question Answer
 
-**Q: Can the current upstream architecture capture the same compact rank-factored intermediates (~70 MB) that old v0.3.2 used, or does the current graph structure only expose full S-state tensors (~6.5 GiB)?**
+**Q: Can the current upstream architecture capture the same compact rank-factored intermediates that old v0.3.2 used, or does the current graph structure only expose full S-state tensors (~6.5 GiB)?**
 
 **A: The current upstream CAN capture the same compact rank-factored intermediates.** The 6.5 GiB figure was based on incorrect assumptions. The actual intermediates are:
 
+**CORRECTION (2026-08-08):** The table below has been updated with actual Qwen3.6 GGUF metadata (S=128, H_k=16/48, H_v=48, conv_ch=10,240). The previous values used S=1536, H_k=1/8, H_v=8, conv_ch=15,360.
+
 | Component | Size (fused GDN, 48 layers, 25 tokens) | Notes |
 |-----------|--------------------------------------|-------|
-| k tensors | ~7.4 MB | `1536 * 1 * 25 * 48 * 4 bytes` |
-| v tensors | ~58.9 MB | `1536 * 8 * 25 * 48 * 4 bytes` |
-| gate tensors | ~0.04 MB | `1 * 8 * 25 * 48 * 4 bytes` |
-| beta tensors | ~0.04 MB | Same as gate |
-| qkv_mixed | ~73.7 MB | `15360 * 25 * 48 * 4 bytes` |
-| **Total** | **~134 MB** | F32 precision |
+| k tensors | ~9.8 MB | `128 * 16 * 25 * 48 * 4 bytes` |
+| v tensors | ~29.7 MB | `128 * 48 * 25 * 48 * 4 bytes` |
+| gate tensors | ~0.2 MB | `1 * 48 * 25 * 48 * 4 bytes` |
+| beta tensors | ~0.2 MB | Same as gate |
+| qkv_mixed | ~49.2 MB | `10240 * 25 * 48 * 4 bytes` |
+| **Total** | **~85 MB** | F32 precision |
 
-This is ~134 MB for fused GDN or ~186 MB for non-fused, NOT 6.5 GiB. The old v0.3.2 achieved ~70 MB because it used `ssm_d_state = 256` (which may have been correct for smaller models). With `ssm_d_state = 1536` for Qwen3.6 27B, the corrected estimate is ~134 MB.
+This is ~85 MB for fused GDN or ~117 MB for non-fused, NOT 6.5 GiB. The old v0.3.2 achieved ~70 MB because it used wrong dimensions (S=256, H_v=8) that partially canceled out. With actual GGUF metadata (S=128, H_v=48), the corrected estimate is ~85 MB (fused) / ~117 MB (non-fused).
 
 ### C.2 What Changed Between Old and Current
 
@@ -395,7 +329,7 @@ To enable replay with current upstream:
 
 ### C.4 Key Findings
 
-1. **The 6.5 GiB estimate was wrong.** The tape stores rank-factored intermediates (~134 MB), not full S-state.
+1. **The 6.5 GiB estimate was wrong.** The tape stores rank-factored intermediates (~85 MB fused, ~117 MB non-fused), not full S-state. **CORRECTION (2026-08-08):** Updated from ~134-186 MB to ~85-117 MB using actual GGUF metadata.
 2. **Current upstream exposes the same intermediates as old v0.3.2.** The graph nodes exist with the same callback names.
 3. **The GDN computation is identical.** Same CUDA kernel, same math, same beta convention.
 4. **The only gap is the capture mechanism.** Re-implementing tape capture is straightforward (~200 lines).

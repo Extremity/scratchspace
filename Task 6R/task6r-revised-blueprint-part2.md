@@ -160,16 +160,18 @@ class llama_memory_recurrent {
 
 #### C.4.1 GPU Tape Tensors
 
+**CORRECTION (2026-08-08):** The table below has been updated with actual Qwen3.6 GGUF metadata. Previous values used S_k=1536, H_k=1/8, H_v=8, conv_channels=15,360. Corrected values are S_k=128, H_k=16/48, H_v=48, conv_channels=10,240.
+
 | Tensor | Shape | Elements (Qwen3.6, fused) | Bytes (F32) | Per 48 Layers |
 |--------|-------|--------------------------|-------------|---------------|
-| k | `[S_k, H_k, max_tokens]` = `[1536, 1, 25]` | 38,400 | 153,600 | 7.4 MB |
-| v | `[S_v, H_v, max_tokens]` = `[1536, 8, 25]` | 307,200 | 1,228,800 | 58.9 MB |
-| gate | `[1, H_v, max_tokens]` = `[1, 8, 25]` | 200 | 800 | 0.04 MB |
-| beta | `[1, H_v, max_tokens]` = `[1, 8, 25]` | 200 | 800 | 0.04 MB |
-| qkv | `[conv_channels, max_tokens]` = `[15360, 25]` | 384,000 | 1,536,000 | 73.7 MB |
-| **Per layer total** | | **729,800** | **2,919,200 (~2.79 MB)** | **~134 MB** |
+| k | `[S_k, H_k, max_tokens]` = `[128, 16, 25]` | 51,200 | 204,800 | 9.8 MB |
+| v | `[S_v, H_v, max_tokens]` = `[128, 48, 25]` | 153,600 | 614,400 | 29.7 MB |
+| gate | `[1, H_v, max_tokens]` = `[1, 48, 25]` | 1,200 | 4,800 | 0.2 MB |
+| beta | `[1, H_v, max_tokens]` = `[1, 48, 25]` | 1,200 | 4,800 | 0.2 MB |
+| qkv | `[conv_channels, max_tokens]` = `[10240, 25]` | 256,000 | 1,024,000 | 49.2 MB |
+| **Per layer total** | | **463,200** | **1,852,800 (~1.77 MB)** | **~85 MB** |
 
-**For non-fused GDN (H_k = 8):** k tensor grows to `[1536, 8, 25]` = 307,200 elements = 1,228,800 bytes. Per layer = ~3.87 MB. Total = ~186 MB.
+**For non-fused GDN (H_k = 48):** k tensor grows to `[128, 48, 25]` = 153,600 elements = 614,400 bytes. Per layer = ~2.42 MB. Total = ~117 MB.
 
 **Allocation:** Pre-allocated once at server init. Reused every cycle. Device-aware placement (each layer's tape on the same GPU as the model layer).
 
@@ -177,30 +179,23 @@ class llama_memory_recurrent {
 
 #### C.4.2 Backup Cells
 
-| Component | Formula | Size (Qwen3.6, n_parallel=4) |
-|-----------|---------|----------------------|
-| R tensor backup | `n_embd_r × n_backup × n_layers × 4B` = `30720 × 8 × 48 × 4` | 461 MB |
-| S tensor backup | `n_embd_s × n_backup × n_layers × 4B` = `786432 × 8 × 48 × 4` | 11,985 MB |
-
-Wait — that's way too large. Let me recalculate. The backup cells are extra ROWS in the existing R/S tensors, not separate tensors. Each row represents one cell's R or S state across all layers.
-
-**Correct calculation:**
+**CORRECTION (2026-08-08):** This section has been revised based on [`task6r-correction-part2-backup-cells.md`](task6r-correction-part2-backup-cells.md). The previous estimate used `n_backup_cells = n_parallel * 2 = 8` extra cells. The old v0.3.2 code proved that `n_backup_cells = n_parallel = 4` is sufficient (1 backup cell per slot). This reduces backup cell VRAM from ~1,246 MB to ~612 MB.
 
 The R tensor has shape `[n_embd_r, n_rows]` and the S tensor has shape `[n_embd_s, n_rows]`. The current allocation is `n_rows = mem_size * (1 + n_rs_seq)`. With `n_rs_seq=0` and `mem_size = n_ctx * n_parallel`, that's `n_rows = n_ctx * n_parallel`.
 
-Backup cells add `n_backup_cells` extra rows. For `n_backup_cells = n_parallel * 2 = 8`:
+Backup cells add `n_backup_cells` extra rows. For `n_backup_cells = n_parallel = 4` (CORRECTED from `n_parallel * 2 = 8`):
 
-| Component | Per Row | Total (8 backup rows) |
+| Component | Per Row | Total (4 backup rows) |
 |-----------|---------|----------------------|
-| R per row | `n_embd_r * n_layers * 4B` = `30720 * 48 * 4` = 5.9 MB | 46.9 MB |
-| S per row | `n_embd_s * n_layers * 4B` = `786432 * 48 * 4` = 149.9 MB | 1,199 MB |
+| R per row | `n_embd_r * n_layers * 4B` = `30720 * 48 * 4` = 5.9 MB | 23.5 MB |
+| S per row | `n_embd_s * n_layers * 4B` = `786432 * 48 * 4` = 149.9 MB | 599.6 MB |
 
-**Total backup cells: ~1,246 MB for 8 backup cells.**
+**Total backup cells: ~623 MB for 4 backup cells (CORRECTED from ~1,246 MB for 8 cells).**
 
-This is the same calculation as the previous blueprint. The backup cells are the dominant GPU allocation in custom mode.
+The old v0.3.2 used `mem_size = 2 * n_parallel = 8` total cells (4 normal + 4 backup), giving 4 backup cells. The 6R proposal incorrectly used `n_backup_cells = n_parallel * 2 = 8`, doubling the necessary backup cells. The old code proved 1 backup cell per slot is sufficient for the rollback-then-replay pattern.
 
 **Scaling behavior:**
-- Linear with `n_parallel` (backup cells = `n_parallel * 2`).
+- Linear with `n_parallel` (backup cells = `n_parallel`, NOT `n_parallel * 2`).
 - Linear with `n_layers` (each layer has R and S state).
 - Independent of `n_ctx` (backup cells are per-cell, not per-context).
 
@@ -216,19 +211,21 @@ This is the same calculation as the previous blueprint. The backup cells are the
 
 #### C.4.4 Total Memory Summary
 
+**CORRECTION (2026-08-08):** Updated tape size from ~134-186 MB to ~85-117 MB, and backup cells from ~1,246 MB (8 cells) to ~623 MB (4 cells).
+
 | Component | Location | Size (Qwen3.6, n_parallel=4) | Lifetime |
 |-----------|----------|--------------------------------|----------|
-| GPU tape (fused) | GPU | ~134 MB | Server lifetime |
-| GPU tape (non-fused) | GPU | ~186 MB | Server lifetime |
-| Backup cells (8) | GPU | ~1,246 MB | Server lifetime |
+| GPU tape (fused) | GPU | ~85 MB | Server lifetime |
+| GPU tape (non-fused) | GPU | ~117 MB | Server lifetime |
+| Backup cells (4) | GPU | ~623 MB | Server lifetime |
 | Base RS (n_rs_seq=0) | GPU | ~599 MB | Server lifetime |
 | Replay graph context | GPU | ~1-2 MB | Server lifetime |
 | Draft model | GPU | ~800 MB | Server lifetime |
-| **Total DFlash GPU overhead** | | **~2,865 - 2,917 MB** | |
+| **Total DFlash GPU overhead** | | **~2,108 - 2,140 MB** | |
 | **vs Current upstream** | | **~6,187 MB** | |
-| **VRAM saved** | | **~3,270 - 3,322 MB (~3.2-3.3 GB)** | |
+| **VRAM saved** | | **~4,047 - 4,079 MB (~4.0-4.1 GB)** | |
 
-**Note:** The revised design has HIGHER GPU overhead than the old v0.3.2 (~270 MB) because it includes backup cells (~1,246 MB). The old implementation used a different backup mechanism (recurrent-only backup copies to separate backup sequences) that was more memory-efficient. However, the revised design's backup cells are simpler to implement and maintain.
+**Note (CORRECTED):** The revised design has LOWER GPU overhead than the previous estimate (~2,865 MB) due to two corrections: (1) tape size reduced from ~134-186 MB to ~85-117 MB using actual GGUF metadata, and (2) backup cells reduced from ~1,246 MB (8 cells) to ~623 MB (4 cells) matching old v0.3.2's approach. The total DFlash overhead is now ~2.1 GB vs current upstream's ~6.2 GB, saving ~4 GB VRAM.
 
 ---
 
@@ -255,7 +252,7 @@ For each parallel cell:
 ```
 
 **Entry point:** Before `common_speculative_draft()` at [`server-context.cpp:3264`](tools/server/server-context.cpp:3264).
-**Cost:** ~2.4 ms (8 cells × 149.9 MB / 500 GB/s device-native copy).
+**Cost:** ~1.2 ms (4 cells × 156 MB / 500 GB/s device-native copy). **CORRECTION (2026-08-08):** Updated from 8 cells to 4 cells.
 
 #### Phase 2: Draft with Capture
 
@@ -338,12 +335,14 @@ common_context_seq_rm() removes rejected KV beyond n_accepted.
 
 | Operation | GPU Cycles | Estimated Time |
 |-----------|-----------|----------------|
-| Pre-draft backup (cell_copy) | Memory copy, 8 cells × 149.9 MB | ~2.4 ms (500 GB/s) |
+| Pre-draft backup (cell_copy) | Memory copy, 4 cells × 156 MB | ~1.2 ms (500 GB/s) |
 | Draft forward pass | Unchanged from baseline | Baseline |
 | Tape capture (ggml_cpy) | Memory copy, batched with compute | ~0 ms (overlaps) |
 | GDN replay | 48 layers × n_accepted tokens × rank-1 update | ~0.1 ms |
 | State write-back | Memory copy, 48 layers × S-state | ~0.3 ms |
-| **Total custom overhead** | | **~2.8 ms per cycle** |
+| **Total custom overhead** | | **~1.6 ms per cycle** |
+
+**CORRECTION (2026-08-08):** Updated from ~2.8 ms to ~1.6 ms due to backup cells reduced from 8 to 4.
 
 #### C.6.2 CPU Computation
 
@@ -401,16 +400,18 @@ common_context_seq_rm() removes rejected KV beyond n_accepted.
 
 #### C.7.2 Custom DFlash Overhead (Revised)
 
+**CORRECTION (2026-08-08):** Updated tape size from ~134-186 MB to ~85-117 MB, and backup cells from ~1,246 MB (8 cells) to ~623 MB (4 cells).
+
 | Component | Size |
 |-----------|------|
 | Base RS (n_rs_seq=0) | 599 MB |
-| Backup cells (8) | 1,246 MB |
-| GPU tape (fused) | 134 MB |
-| GPU tape (non-fused) | 186 MB |
+| Backup cells (4) | 623 MB |
+| GPU tape (fused) | 85 MB |
+| GPU tape (non-fused) | 117 MB |
 | Replay graph context | 2 MB |
 | Draft model | ~800 MB |
-| **Total (fused)** | **~2,867 MB** |
-| **Total (non-fused)** | **~2,919 MB** |
+| **Total (fused)** | **~2,109 MB** |
+| **Total (non-fused)** | **~2,141 MB** |
 
 #### C.7.3 Removed Allocations
 
@@ -422,21 +423,21 @@ common_context_seq_rm() removes rejected KV beyond n_accepted.
 
 | Component | Size Added |
 |-----------|-----------|
-| Backup cells (8 rows) | 1,246 MB |
-| GPU tape | 134-186 MB |
+| Backup cells (4 rows) | 623 MB |
+| GPU tape | 85-117 MB |
 | Replay graph context | 2 MB |
-| **Total added** | **~1,382-1,434 MB** |
+| **Total added** | **~710-742 MB** |
 
 #### C.7.5 Net VRAM Savings
 
 | Metric | Value |
 |--------|-------|
 | Removed | 4,788 MB |
-| Added | 1,382-1,434 MB |
-| **Net savings** | **3,354 - 3,406 MB (~3.3-3.4 GB)** |
-| **Savings %** | **54-55%** |
+| Added | 710-742 MB |
+| **Net savings** | **4,046 - 4,078 MB (~4.0-4.1 GB)** |
+| **Savings %** | **84-85%** |
 
-**Note:** The revised design saves ~3.3 GB VRAM vs current upstream, which is slightly less than the previous blueprint's ~3.6 GB savings (because the previous blueprint's backup cell estimate was different). However, the revised design eliminates the ~6.5 GB CPU RAM requirement and ~26 ms PCIe transfer overhead, making it significantly better in practice.
+**Note (CORRECTED):** The revised design saves ~4.0-4.1 GB VRAM vs current upstream (up from the previous ~3.3 GB estimate). The improvement comes from two corrections: (1) tape size reduced from ~134-186 MB to ~85-117 MB using actual GGUF metadata, and (2) backup cells reduced from ~1,246 MB (8 cells) to ~623 MB (4 cells) matching old v0.3.2's approach. The revised design also eliminates the ~6.5 GB CPU RAM requirement and ~26 ms PCIe transfer overhead, making it significantly better in practice.
 
 ---
 
@@ -462,8 +463,8 @@ common_context_seq_rm() removes rejected KV beyond n_accepted.
 
 | Component | Previous Design | Why Invalid | Revised Design |
 |-----------|----------------|-------------|---------------|
-| **Tape storage location** | CPU buffer (`std::vector<float>`) | Based on wrong ~6.5 GiB estimate. Actual tape is ~134 MB GPU — no need for CPU storage. | GPU tape with device-aware placement |
-| **Tape tensor dimensions** | Full S-state (v/g/b with S_v=786,432) | Task 5 captured wrong tensors. Old v0.3.2 captured rank-factored intermediates. | Rank-factored GDN intermediates (k=[1536,1,25], v=[1536,8,25], etc.) |
+| **Tape storage location** | CPU buffer (`std::vector<float>`) | Based on wrong ~6.5 GiB estimate. Actual tape is ~85-117 MB GPU — no need for CPU storage. | GPU tape with device-aware placement |
+| **Tape tensor dimensions** | Full S-state (v/g/b with S_v=786,432) | Task 5 captured wrong tensors. Old v0.3.2 captured rank-factored intermediates. | Rank-factored GDN intermediates (k=[128,16,25], v=[128,48,25], etc.) **CORRECTED** |
 | **Tape capture location** | `delta-net-base.cpp` after `cb()` calls | Captures post-processing tensors with wrong dimensions. | `qwen35.cpp` after tensor computation, same point as old v0.3.2 |
 | **PCIe transfer overhead** | ~26 ms/cycle (GPU→CPU + CPU→GPU) | Eliminated — tape is GPU-native. | 0 ms/cycle |
 | **CPU RAM requirement** | ~6.5 GB | Eliminated — tape on GPU. | 0 MB |
@@ -475,8 +476,8 @@ common_context_seq_rm() removes rejected KV beyond n_accepted.
 | Component | Previous | Revised | Reason |
 |-----------|----------|---------|--------|
 | `server_dflash_custom_state` | CPU tape buffers + metadata | GPU tape pointer + metadata | Tape moved from CPU to GPU |
-| VRAM savings estimate | ~3.6 GB saved | ~3.3 GB saved | More accurate backup cell calculation |
-| Performance estimate | ~26 ms overhead/cycle | ~2.8 ms overhead/cycle | No PCIe transfers |
+| VRAM savings estimate | ~3.6 GB saved | **~4.0-4.1 GB saved** | **CORRECTED** — tape + backup cell corrections |
+| Performance estimate | ~26 ms overhead/cycle | **~1.6 ms overhead/cycle** | **CORRECTED** — backup cells reduced from 8 to 4 |
 | Code size estimate | ~900 lines (670 new + 236 modified) | ~546 lines (330 new + 216 modified) | No CUDA kernel, simpler tape struct |
 | Tape capture point | `delta-net-base.cpp` | `qwen35.cpp` | Match old v0.3.2 capture point |
 | Tensor names captured | `k_in`, `v_in`, `g_in`, `b_in` | `k_conv_predelta`, `v_conv_predelta`, `gate`, `beta_sigmoid`, `linear_attn_qkv_mixed` | Match actual graph node names |
@@ -507,13 +508,15 @@ common_context_seq_rm() removes rejected KV beyond n_accepted.
 |--------|-------------------|-------------------|--------|
 | Total code lines | ~900 | ~546 | -39% |
 | New files | 3 | 2 | -1 (no CUDA kernel) |
-| GPU VRAM overhead | ~2,598 MB | ~2,867 MB | +269 MB (more accurate backup cells) |
+| GPU VRAM overhead | ~2,598 MB | **~2,109 MB** | **-489 MB** (tape + backup cell corrections) |
 | CPU RAM overhead | ~6,552 MB | ~0 MB | -100% |
 | PCIe transfers/cycle | ~13 GB | 0 GB | -100% |
-| Per-cycle overhead | ~26 ms | ~2.8 ms | -89% |
-| VRAM saved vs current | ~3.6 GB | ~3.3 GB | -8% (but eliminates CPU RAM + PCIe) |
+| Per-cycle overhead | ~26 ms | **~1.6 ms** | **-94%** (backup cells 8→4) |
+| VRAM saved vs current | ~3.6 GB | **~4.0-4.1 GB** | **+11%** (better than previous estimate) |
 | New CUDA code | ~200 lines | 0 lines | -100% |
 | Fork drift risk | Medium | Low | Improved |
+
+**CORRECTION (2026-08-08):** All values in this table have been updated with corrected tape size (~85-117 MB) and backup cell budget (~623 MB for 4 cells).
 
 ---
 
