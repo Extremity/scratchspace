@@ -3,7 +3,7 @@
 **Total File Size:** `17.41 GB` (Binary Continuous Stream)  
 **Target Teacher Model:** Qwen 3.8-27B Q8_0 GGUF (`n_vocab = 248320`, `hidden_dim = 5120`)  
 **Extracted Brain Layers:** 5 Layers Total (`2, 17, 32, 47, 62`)  
-**Extraction Methodology:** Generation-Based (Anthropic/SLM approach via `--generate 64`)  
+**Extraction Methodology:** Generation-Based (Anthropic/SLM approach via `--generate 64`)
 
 ---
 
