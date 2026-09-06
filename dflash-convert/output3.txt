@@ -1,0 +1,649 @@
+PS C:\Local AI\llama.cpp hidden state PR\llama.cpp\build\bin> Get-ChildItem "..\.." -Recurse -File -Filter "*.cpp" | Select-String -Pattern "embeddings_nextn|embeddings_layer_inp" -Context 3,5
+
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:10:#include "ngram-mod.h"
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:11:#include "sampling.h"
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:12:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:13:#include "../src/llama-ext.h" // staging API: llama_set_embeddings_nextn / llama_get_embeddings_nextn_ith (used by MTP)
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:14:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:15:#include <algorithm>
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:16:#include <cassert>
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:17:#include <cstring>
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:18:#include <iomanip>
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:511:        // turn on extraction of the target layers' hidden states
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:512:        for (uint32_t k = 0; k < target_layer_ids_n; ++k) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:513:            if (target_layer_ids[k] < n_layer_tgt) {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:514:                llama_set_embeddings_layer_inp(ctx_tgt, (uint32_t) target_layer_ids[k], true);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:515:            } else if (target_layer_ids[k] == n_layer_tgt) {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:516:                llama_set_embeddings_nextn(ctx_tgt, true, /*masked*/ false);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:517:            } else {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:518:                GGML_ABORT("EAGLE3: target layer id %d exceeds target n_layer %d", target_layer_ids[k], n_layer_tgt);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:519:            }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:520:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:521:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:522:        // turn on extraction of the draft model's pre-norm hidden state
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:523:        // (used both for the encoder output g_embd and the decoder pre-norm output).
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:524:        llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ true);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:525:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:526:        pending_g_last.assign(n_seq, std::vector<float>(n_embd_dec, 0.0f));
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:527:        pending_pos_last.assign(n_seq, -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:528:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:529:        verify_g.assign(n_seq, std::vector<float>());
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:605:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:606:        for (uint32_t k = 0; k < target_layer_ids_n; ++k) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:607:            const float * layer = target_layer_ids[k] < n_layer_tgt
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:608:                ? llama_get_embeddings_layer_inp(ctx_tgt, (uint32_t) target_layer_ids[k])
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:609:                : llama_get_embeddings_nextn(ctx_tgt);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:610:            if (!layer) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:611:                GGML_ABORT("EAGLE3: target layer %d input not extracted.", target_layer_ids[k]);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:612:            }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:613:            for (int32_t i = 0; i < n_tokens; ++i) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:614:                float * dst = features_buf.data() + (size_t) i * n_embd_enc + k * (size_t) n_embd_tgt;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:642:            }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:643:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:644:            // g_embd has shape [n_chunk, n_embd_dec] in ctx_dft's pre-norm embeddings buffer.
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:645:            const float * g_embd_chunk = llama_get_embeddings_nextn(ctx_dft);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:646:            GGML_ASSERT(g_embd_chunk && "EAGLE3 encoder produced no output.");
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:647:            std::memcpy(g_embd_buf.data() + (size_t) i * n_embd_dec,
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:648:                        g_embd_chunk,
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:649:                        (size_t) n_chunk * n_embd_dec * sizeof(float));
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:650:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:779:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:780:                common_sampler_sample(smpl, ctx_dft, i_batch, true);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:781:                // pre-norm hidden state of this position becomes g_embd for the next step
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:782:                const float * prenorm = llama_get_embeddings_nextn_ith(ctx_dft, i_batch);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:783:                ++i_batch;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:784:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:785:                const auto * cur_p = common_sampler_get_candidates(smpl, true);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:786:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:787:                for (int k = 0; k < std::min(3, (int) cur_p->size); ++k) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1007:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1008:        // turn on extraction of the target layers' input embeddings
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1009:        for (uint32_t k = 0; k < target_layer_ids_n; ++k) {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1010:            llama_set_embeddings_layer_inp(ctx_tgt, (uint32_t) target_layer_ids[k], true);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1011:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1012:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1013:        llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ true);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1014:        llama_set_causal_attn(ctx_dft, false); // DFlash needs non-causal attention
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1015:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1016:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1017:    ~common_speculative_impl_draft_dflash() override {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1018:        auto * ctx_dft = this->params.ctx_dft;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1099:                // gather this chunk's target features, interleaved by extract layer
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1100:                features_buf.resize((size_t) n_chunk * n_embd_enc);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1101:                for (uint32_t k = 0; k < target_layer_ids_n; ++k) {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1102:                    const float * layer = llama_get_embeddings_layer_inp(ctx_tgt, (uint32_t) target_layer_ids[k]);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1103:                    if (!layer) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1104:                        GGML_ABORT("DFlash: target layer %d input not extracted.", target_layer_ids[k]);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1105:                    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1106:                    for (int32_t i = 0; i < n_chunk; ++i) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1107:                        float       * dst = features_buf.data() + (size_t) i * n_embd_enc + k * (size_t) n_embd_tgt;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1128:                    return false;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1129:                }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1130:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1131:                const float * inp_g = llama_get_embeddings_nextn(ctx_dft);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1132:                GGML_ASSERT(inp_g && "DFlash encoder produced no output.");
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1133:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1134:                // inject the DFlash decoder K/V cache at the tokens' target positions
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1135:                batch_inject.n_tokens = n_chunk;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1136:                std::memcpy(batch_inject.embd, inp_g, (size_t) n_chunk * n_embd_dec * sizeof(float));
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1210:            if (is_dspark) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1211:                // DSpark predicts the next token from position 0 and optionally truncates
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1212:                // at the first position below the confidence threshold.
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1213:                const float * conf = params.p_min > 0.0f ? llama_get_embeddings_nextn(ctx_dft) : nullptr;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1214:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1215:                for (int32_t i = 0; i < n_block_tokens; ++i) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1216:                    const int32_t idx = beg + i;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1217:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1218:                    if (conf && conf[(size_t) idx * n_embd_dec] < params.p_min) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1361:            }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1362:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1363:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1364:        llama_set_embeddings_nextn(ctx_tgt, true, /*masked*/ false);
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1365:        llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ true);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1366:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1367:        is_mem_shared = llama_get_ctx_other(ctx_dft) == ctx_tgt;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1368:        chain_heads   = n_mtp_layers > 1 && !is_mem_shared;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1369:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1370:        if (chain_heads) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1472:            //                                                       ^--- this is a problem
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1473:            // TODO:this is generally true, but would be nice to assert it
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1474:            {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1475:                const float * h_tgt = llama_get_embeddings_nextn(ctx_tgt);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1476:                std::memcpy(batch.embd + (size_t) 1 * n_embd, h_tgt, row_bytes * (n_tokens-1));
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1477:            }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1478:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1479:            // fill the pending embeddings from a previous run
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1480:            auto set_h = [&](int idx, const float * h_row) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1531:            verify_h[seq_id].resize((size_t) n_rows * n_embd);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1532:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1533:            for (int32_t i = 0; i < n_rows; ++i) {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1534:                const float * h = llama_get_embeddings_nextn_ith(ctx_tgt, i_batch_beg[seq_id] + i);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1535:                std::memcpy(verify_h[seq_id].data() + (size_t) i * n_embd, h, row_bytes);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1536:            }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1537:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1538:            std::memcpy(pending_h[seq_id].data(),
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1539:                    verify_h[seq_id].data() + (size_t) (n_rows - 1) * n_embd, row_bytes);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1612:                auto * smpl = smpls[seq_id].get();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1613:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1614:                common_sampler_sample(smpl, ctx_dft, i_last[seq_id], true);
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1615:                const float * h_row = llama_get_embeddings_nextn_ith(ctx_dft, i_last[seq_id]);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1616:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1617:                const auto * cur_p = common_sampler_get_candidates(smpl, true);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1618:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1619:                for (int k = 0; k < std::min(3, (int) cur_p->size); ++k) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\common\speculative.cpp:1620:                    SPC_DBG(" - seq_id %d, draft candidate %3d, pos %3d: %6d (%8.3f) '%s'\n",
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:115:    cparams.yarn_beta_fast          = params.yarn_beta_fast   >= 0.0f ? params.yarn_beta_fast   : hparams.yarn_beta_fast;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:116:    cparams.yarn_beta_slow          = params.yarn_beta_slow   >= 0.0f ? params.yarn_beta_slow   : hparams.yarn_beta_slow;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:117:    cparams.embeddings              = params.embeddings;
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:118:    cparams.embeddings_nextn        = false;
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:119:    cparams.embeddings_nextn_masked = false;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:120:    cparams.extract_hidden_states   = params.extract_hidden_states;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:121:    cparams.offload_kqv             = params.offload_kqv;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:122:    cparams.no_perf                 = params.no_perf;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:123:    cparams.warmup                  = false;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:124:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:125:    // +1: id n_layer() taps the output of the last layer ("input" of the head)
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:126:    cparams.embeddings_layer_inp.resize(hparams.n_layer() + 1, false);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:127:    embd_layer_inp.resize(hparams.n_layer() + 1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:128:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:129:    cparams.ctx_type     = params.ctx_type;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:130:    cparams.pooling_type = params.pooling_type;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:131:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:942:    return it->second.data();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:943:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:944:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:945:float * llama_context::get_embeddings_nextn() {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:946:    output_reorder();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:947:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:948:    return embd_nextn.data;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:949:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:950:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:951:float * llama_context::get_embeddings_nextn_ith(int32_t i) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:952:    output_reorder();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:953:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:954:    try {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:955:        if (embd_nextn.data == nullptr) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:956:            throw std::runtime_error("no nextn embeddings");
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:958:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:959:        const uint32_t n_embd = model.hparams.n_embd_out();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:960:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:961:        if (!cparams.embeddings_nextn_masked) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:962:            // unmasked: nextn rows are stored densely, indexed by raw token position.
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:963:            if (i < 0 || (size_t)(i + 1) * n_embd > embd_nextn.size) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:964:                throw std::runtime_error(format("out of range [0, %zu)", embd_nextn.size / n_embd));
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:965:            }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:966:            return embd_nextn.data + (size_t) i * n_embd;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:978:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:979:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:980:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:981:float * llama_context::get_embeddings_layer_inp(uint32_t lid) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:982:    output_reorder();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:983:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:984:    GGML_ASSERT(lid < embd_layer_inp.size() && embd_layer_inp[lid].has_data());
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:985:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:986:    return embd_layer_inp[lid].data;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1206:    //sched_need_reserve = true;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1207:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1208:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1209:void llama_context::set_embeddings_nextn(bool value, bool masked) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1210:    LLAMA_LOG_DEBUG("%s: value = %d, masked = %d\n", __func__, value, masked);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1211:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1212:    cparams.embeddings_nextn        = value;
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1213:    cparams.embeddings_nextn_masked = masked;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1214:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1215:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1216:void llama_context::set_embeddings_layer_inp(uint32_t lid, bool enable) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1217:    LLAMA_LOG_DEBUG("%s: lid = %d, enable = %d\n", __func__, lid, enable);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1218:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1219:    GGML_ASSERT(lid <= model.hparams.n_layer());
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1220:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1221:    cparams.embeddings_layer_inp[lid] = enable;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1222:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1223:    // note: without this reserve, the draft acceptance drops to zero. not sure why - this is unexpected
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1224:    sched_need_reserve = true;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1225:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1226:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1552:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1553:    auto * t_logits  = res->get_logits();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1554:    auto * t_embd    = res->get_embd_pooled() ? res->get_embd_pooled() : res->get_embd();
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1555:    auto * t_h_nextn = cparams.embeddings_nextn ? res->get_h_nextn() : nullptr;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1556:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1557:    // extract logits
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1558:    if (logits.data && t_logits) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1559:        ggml_backend_t backend_res = ggml_backend_sched_get_tensor_backend(sched.get(), t_logits);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1560:        GGML_ASSERT(backend_res != nullptr);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1951:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1952:        auto * t_logits  = res->get_logits();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1953:        auto * t_embd    = cparams.embeddings       ? res->get_embd()     : nullptr;
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1954:        auto * t_h_nextn = cparams.embeddings_nextn ? res->get_h_nextn()  : nullptr;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1955:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1956:        if (t_embd && res->get_embd_pooled()) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1957:            t_embd = res->get_embd_pooled();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1958:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:1959:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2037:        // extract nextn embeddings before
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2038:        // only meaningful in LLAMA_POOLING_TYPE_NONE (per-token); other pooling modes are ignored.
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2039:        {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2040:            const bool masked    = cparams.embeddings_nextn_masked;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2041:            const int64_t n_rows = masked ? n_outputs       : (int64_t) ubatch.n_tokens;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2042:            const int64_t offset = masked ? n_outputs_prev  : n_tokens_prev;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2043:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2044:            if (embd_nextn.data && t_h_nextn && n_rows > 0 && cparams.pooling_type == LLAMA_POOLING_TYPE_NONE) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2045:                ggml_backend_t backend_h = ggml_backend_sched_get_tensor_backend(sched.get(), t_h_nextn);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2262:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2263:    bool has_logits     = true;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2264:    bool has_embd       = cparams.embeddings;
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2265:    bool has_embd_nextn = cparams.embeddings_nextn;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2266:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2267:    // TODO: hacky enc-dec support
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2268:    if (model.arch == LLM_ARCH_T5) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2269:        has_logits = true;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2270:        has_embd   = true;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2278:    embd.size       = has_embd       ? n_embd_out*n_outputs_max  : 0;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2279:    embd_nextn.size = has_embd_nextn ? n_embd_out*n_outputs_max  : 0;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2280:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2281:    if (has_embd_nextn && !cparams.embeddings_nextn_masked) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2282:        // unmasked: nextn row exists for every token in the batch, not just
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2283:        // those flagged via batch.logits[i] -> size by token count instead.
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2284:        embd_nextn.size = (size_t) n_embd_out * n_batch;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2285:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2286:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2287:    for (bool enabled : cparams.embeddings_layer_inp) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2288:        if (enabled) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2289:            embd_layer_inp_float_count += (size_t) n_embd * n_batch;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2290:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2291:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2292:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2357:    offset += embd_nextn.size * sizeof(float);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2358:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2359:    for (uint32_t il = 0; il < embd_layer_inp.size(); ++il) {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2360:        if (cparams.embeddings_layer_inp[il]) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2361:            embd_layer_inp[il] = buffer_view<float>{(float *) (base + offset), (size_t) n_embd * n_batch};
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2362:            offset += embd_layer_inp[il].size * sizeof(float);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2363:        } else {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2364:            embd_layer_inp[il] = buffer_view<float>{nullptr, 0};
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2365:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2412:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2413:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2414:void llama_context::extract_layer_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens) {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2415:    for (uint32_t il = 0; il < cparams.embeddings_layer_inp.size(); ++il) {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2416:        if (!cparams.embeddings_layer_inp[il]) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2417:            continue;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2418:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2419:        if (!embd_layer_inp[il].has_data()) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2420:            GGML_ABORT("output layer input buffer not allocated");
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:2421:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:3994:    return ctx->get_embeddings_seq(seq_id);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:3995:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:3996:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:3997:void llama_set_embeddings_nextn(llama_context * ctx, bool value, bool masked) {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:3998:    ctx->set_embeddings_nextn(value, masked);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:3999:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4000:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4001:void llama_set_embeddings_layer_inp(llama_context * ctx, uint32_t lid, bool value) {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4002:    ctx->set_embeddings_layer_inp(lid, value);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4003:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4004:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4005:void llama_set_nextn_layer_offset(llama_context * ctx, int32_t offset) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4006:    ctx->set_nextn_layer_offset(offset);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4007:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4014:    return ctx->get_memory();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4015:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4016:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4017:float * llama_get_embeddings_nextn(llama_context * ctx) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4018:    ctx->synchronize();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4019:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4020:    return ctx->get_embeddings_nextn();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4021:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4022:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4023:float * llama_get_embeddings_nextn_ith(llama_context * ctx, int32_t i) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4024:    ctx->synchronize();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4025:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4026:    return ctx->get_embeddings_nextn_ith(i);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4027:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4028:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4029:float * llama_get_embeddings_layer_inp(llama_context * ctx, uint32_t lid) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4030:    ctx->synchronize();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4031:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4032:    return ctx->get_embeddings_layer_inp(lid);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4033:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4034:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4035:float * llama_get_hidden_state(llama_context * ctx, int32_t layer) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4036:    if (!ctx->hs_synced()) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-context.cpp:4037:        ctx->synchronize();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-graph.cpp:1354:        ggml_set_output(t_h_nextn);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-graph.cpp:1355:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-graph.cpp:1356:    {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-graph.cpp:1357:        const auto & embeddings_layer_inp = params.cparams.embeddings_layer_inp;
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-graph.cpp:1358:        for (size_t il = 0; il < embeddings_layer_inp.size(); ++il) {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-graph.cpp:1359:            if (embeddings_layer_inp[il]) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-graph.cpp:1360:                GGML_ASSERT(t_layer_inp[il] != nullptr && "layer input tensor is null");
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-graph.cpp:1361:                ggml_set_output(t_layer_inp[il]);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-graph.cpp:1362:            }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-graph.cpp:1363:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\llama-graph.cpp:1364:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:213:                    1.0f / sqrtf(float(n_embd_head)), il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:214:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:215:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:216:        if (il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:217:            cur     = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:218:            inpL    = ggml_get_rows(ctx0, inpL, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:219:            ffn_inp = ggml_get_rows(ctx0, ffn_inp, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:220:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:221:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:277:    cb(cur, "h_nextn", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:278:    res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:279:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:280:    if (!cparams.embeddings_nextn_masked && inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:281:        cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:282:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:283:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:284:    cb(cur, "result_norm", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\cohere2moe.cpp:285:    res->t_embd = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:641:                            Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, kq_scale, il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:642:            }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:643:        }
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:644:        if (il == n_layer - 1 && inp_out_ids && (!cparams.embeddings_nextn || cparams.embeddings_nextn_masked)) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:645:            cur   = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:646:            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:647:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:648:        ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:649:        cb(ffn_inp, "ffn_inp", il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:704:    cb(cur, "h_nextn", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:705:    res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:706:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:707:    if (cparams.embeddings_nextn && !cparams.embeddings_nextn_masked && inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:708:        cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:709:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:710:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:711:    cb(cur, "result_norm", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek2.cpp:712:    res->t_embd = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:441:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:442:        // when unmasked nextn embeddings are requested, t_h_nextn must keep all rows,
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:443:        // so the early output masking has to be skipped (it is applied after the final norm instead)
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:444:        if (il == n_layer - 1 && inp_out_ids && (!cparams.embeddings_nextn || cparams.embeddings_nextn_masked)) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:445:            cur   = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:446:            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:447:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:448:        ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:449:        cb(ffn_inp, "ffn_inp", il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:508:    cb(cur, "h_nextn", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:509:    res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:510:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:511:    if (cparams.embeddings_nextn && !cparams.embeddings_nextn_masked && inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:512:        cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:513:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:514:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:515:    cb(cur, "result_norm", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek32.cpp:516:    res->t_embd = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1288:    cb(inpL, "hc_init", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1289:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1290:    for (int il = 0; il < n_layer; ++il) {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1291:        if ((size_t) il < cparams.embeddings_layer_inp.size() && cparams.embeddings_layer_inp[il]) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1292:            res->t_layer_inp[il] = dsv4_hc_mean(ctx0, inpL);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1293:            cb(res->t_layer_inp[il], "layer_inp", il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1294:            ggml_build_forward_expand(gf, res->t_layer_inp[il]);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1295:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1296:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1370:        cb(inpL, "l_last", il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1371:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1372:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1373:    if ((size_t) n_layer < cparams.embeddings_layer_inp.size() && cparams.embeddings_layer_inp[n_layer]) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1374:        res->t_layer_inp[n_layer] = dsv4_hc_mean(ctx0, inpL);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1375:        cb(res->t_layer_inp[n_layer], "layer_inp", n_layer);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1376:        ggml_build_forward_expand(gf, res->t_layer_inp[n_layer]);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1377:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1378:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1379:    ggml_tensor * flat = ggml_reshape_2d(ctx0, inpL, n_embd*hc, n_tokens);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1380:    ggml_tensor * flat_out = inp_out_ids ? ggml_get_rows(ctx0, flat, inp_out_ids) : flat;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1381:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1382:    if (cparams.embeddings_nextn) {
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1383:        ggml_tensor * h_nextn = cparams.embeddings_nextn_masked ? flat_out : inpL;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1384:        cb(h_nextn, "h_nextn", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1385:        res->t_h_nextn = h_nextn;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1386:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1387:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\deepseek4.cpp:1388:    if (inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\dflash.cpp:300:        conf = ggml_cont(ctx0, ggml_permute(ctx0, conf, 0, 2, 1, 3));
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\dflash.cpp:301:        conf = ggml_reshape_2d(ctx0, conf, 1, n_tok);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\dflash.cpp:302:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\dflash.cpp:303:        // note: broadcast the [1, n_tok] confidences to n_embd-wide rows to be able to reuse `llama_get_embeddings_nextn`
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\dflash.cpp:304:        conf = ggml_repeat(ctx0, conf, res->t_embd);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\dflash.cpp:305:        res->t_h_nextn = conf;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\dflash.cpp:306:        ggml_build_forward_expand(g.gf, conf);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\dflash.cpp:307:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\dflash.cpp:308:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\eagle3.cpp:150:    cb(cur, "fc_out", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\eagle3.cpp:151:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\eagle3.cpp:152:    // Output: g_embeddings e.g. [4096, n_tokens]
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\eagle3.cpp:153:    // store in t_h_nextn (same as MTP) so can be read via llama_get_embeddings_nextn(ctx_dft)
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\eagle3.cpp:154:    ggml_set_output(cur);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\eagle3.cpp:155:    res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\eagle3.cpp:156:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\eagle3.cpp:157:    ggml_build_forward_expand(gf, cur);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\eagle3.cpp:158:}
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:248:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:249:        // TODO @ngxson : strip unused token right after the last KV layer to speed up prompt processing
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:250:        // keep all rows when extracting unmasked nextn embeddings (MTP target needs the hidden state for every token)
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:251:        if (il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:252:            cur  = ggml_get_rows(ctx0,  cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:253:            inpL = ggml_get_rows(ctx0, inpL, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:254:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:255:        cur = build_norm(cur,
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:256:                model.layers[il].attn_post_norm, nullptr,
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:348:            ggml_tensor * inp_this_layer = ggml_view_2d_slice(ctx0, inp_per_layer, il); // [n_embd_per_layer, n_tokens]
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:349:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:350:            // TODO @ngxson : improve this
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:351:            if (il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:352:                inp_this_layer = ggml_get_rows(ctx0, inp_this_layer, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:353:            }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:354:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:355:            cur = ggml_mul(ctx0, cur, inp_this_layer);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:356:            cur = build_lora_mm(model.layers[il].per_layer_proj, cur); // [n_embd, n_tokens]
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:384:            LLM_NORM_RMS, -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:385:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:386:    // Expose the post-output-norm hidden state (the LM-head input feature) so that
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:387:    // MTP draft contexts can read it via llama_get_embeddings_nextn_ith() as the
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:388:    // recurrent h input. This matches the reference (transformers/vLLM/SGLang),
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:389:    // which feeds the drafter the target's post-final-norm hidden state.
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:390:    cb(cur, "h_nextn", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:391:    res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:392:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:393:    if (!cparams.embeddings_nextn_masked && inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:394:        cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:395:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:396:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:397:    cb(cur, "result_norm", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\gemma4.cpp:398:    res->t_embd = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:487:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:488:        // when unmasked nextn embeddings are requested, t_h_nextn must keep all rows,
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:489:        // so the early output masking has to be skipped (it is applied after the final norm instead)
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:490:        if (il == n_layer - 1 && inp_out_ids && (!cparams.embeddings_nextn || cparams.embeddings_nextn_masked)) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:491:            cur   = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:492:            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:493:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:494:        ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:495:        cb(ffn_inp, "ffn_inp", il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:554:    cb(cur, "h_nextn", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:555:    res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:556:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:557:    if (cparams.embeddings_nextn && !cparams.embeddings_nextn_masked && inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:558:        cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:559:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:560:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:561:    cb(cur, "result_norm", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\glm-dsa.cpp:562:    res->t_embd = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:152:            cb(cur, "attn_out", il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:153:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:154:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:155:        if (il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:156:            cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:157:            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:158:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:159:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:160:        ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:220:    cb(cur, "h_nextn", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:221:    res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:222:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:223:    if (!cparams.embeddings_nextn_masked && inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:224:        cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:225:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:226:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:227:    cb(cur, "result_norm", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\hy-v3.cpp:228:    res->t_embd = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:102:    ggml_tensor * inp_out_ids = build_inp_out_ids();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:103:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:104:    const float v_scale = hparams.f_attn_value_scale;
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:105:    const bool emit_h_nextn = cparams.embeddings_nextn;
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:106:    const bool crop_last_layer = inp_out_ids && (!emit_h_nextn || cparams.embeddings_nextn_masked);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:107:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:108:    for (int il = 0; il < n_layer; ++il) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:109:        ggml_tensor * inpSA = inpL;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:110:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:111:        uint32_t n_head_l    = hparams.n_head(il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:237:        cb(cur, "h_nextn", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:238:        res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:239:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:240:        if (!cparams.embeddings_nextn_masked && inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:241:            cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:242:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:243:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:244:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\mimo2.cpp:245:    cur = build_norm(cur,
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h-moe.cpp:52:    ggml_tensor * inp_out_ids = build_inp_out_ids();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h-moe.cpp:53:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h-moe.cpp:54:    // attention fills KV over all tokens, but the MoE is position-wise: gather output rows before
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h-moe.cpp:55:    // it to save FFN compute (unless unmasked embeddings_nextn needs the full-length hidden state)
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h-moe.cpp:56:    const bool emit_h_nextn    = cparams.embeddings_nextn;
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h-moe.cpp:57:    const bool crop_before_ffn = inp_out_ids && (!emit_h_nextn || cparams.embeddings_nextn_masked);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h-moe.cpp:58:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h-moe.cpp:59:    auto * inp_attn = build_attn_inp_kv();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h-moe.cpp:60:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h-moe.cpp:61:    ggml_tensor * h_norm = build_norm(h_embd, layer.nextn.hnorm, nullptr, LLM_NORM_RMS, il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h-moe.cpp:62:    cb(h_norm, "mtp_hnorm", il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:177:    auto * inp = build_inp_mem_hybrid();
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:178:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:179:    ggml_tensor * inp_out_ids = build_inp_out_ids();
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:180:    const bool extract_final_inp = (size_t) n_layer < cparams.embeddings_layer_inp.size() && cparams.embeddings_layer_inp[n_layer];
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:181:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:182:    for (int il = 0; il < n_layer; ++il) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:183:        res->t_layer_inp[il] = inpL;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:184:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:185:        struct ggml_tensor * inpSA = inpL;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:198:            cur = build_ffn_layer(cur, model, il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:199:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:200:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:201:        if (il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked && !extract_final_inp) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:202:            cur   = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:203:            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:204:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:205:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:206:        // add residual
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:215:    if (extract_final_inp) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:216:        res->t_layer_inp[n_layer] = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:217:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:218:        if (inp_out_ids && cparams.embeddings_nextn_masked) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:219:            cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:220:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:221:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:222:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:223:    cur = build_norm(cur, model.output_norm, NULL, LLM_NORM_RMS, -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:226:    cb(cur, "h_nextn", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:227:    res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:228:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:229:    if (!cparams.embeddings_nextn_masked && inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:230:        cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:231:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:232:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:233:    cb(cur, "result_norm", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\nemotron-h.cpp:234:    res->t_embd = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:116:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:117:            cb(cur, "attn_out", il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:118:        }
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:119:        if (il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:120:            // skip computing output for unused tokens
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:121:            cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:122:            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:123:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:124:        ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:156:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:157:    res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:158:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:159:    if (!cparams.embeddings_nextn_masked && inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:160:        cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:161:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:162:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:163:    cur = build_norm(cur,
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\openai-moe.cpp:164:            model.output_norm, NULL,
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:175:            cur = build_layer_attn(inp->get_attn(), cur, inp_pos, sections, il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:176:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:177:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:178:        if (il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:179:            cur   = ggml_get_rows(ctx0, cur,   inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:180:            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:181:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:182:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:183:        // Residual connection
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:216:    cb(cur, "h_nextn", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:217:    res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:218:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:219:    if (!cparams.embeddings_nextn_masked && inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:220:        cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:221:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:222:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:223:    cb(cur, "result_norm", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35.cpp:224:    res->t_embd = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:198:            cur = build_layer_attn(inp->get_attn(), cur, inp_pos, sections, il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:199:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:200:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:201:        if (il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:202:            cur   = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:203:            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:204:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:205:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:206:        // Residual connection
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:236:    cb(cur, "h_nextn", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:237:    res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:238:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:239:    if (!cparams.embeddings_nextn_masked && inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:240:        cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:241:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:242:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:243:    cb(cur, "result_norm", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen35moe.cpp:244:    res->t_embd = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:172:            cur = build_layer_attn(inp->get_attn(), cur, inp_pos, il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:173:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:174:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:175:        if (il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:176:            cur   = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:177:            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:178:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:179:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:180:        // Residual connection
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:210:    cb(cur, "h_nextn", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:211:    res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:212:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:213:    if (!cparams.embeddings_nextn_masked && inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:214:        cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:215:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:216:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:217:    cb(cur, "result_norm", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\qwen3next.cpp:218:    res->t_embd = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:289:            cb(cur, "attn_proj", il);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:290:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:291:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:292:        if (il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:293:            cur   = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:294:            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:295:        }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:296:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:297:        ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:351:    cb(cur, "h_nextn", -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:352:    res->t_h_nextn = cur;
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:353:
+> C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:354:    if (!cparams.embeddings_nextn_masked && inp_out_ids) {
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:355:        cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:356:    }
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:357:
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:358:    cur = build_norm(cur, model.output_norm, nullptr, LLM_NORM_RMS, -1);
+  C:\Local AI\llama.cpp hidden state PR\llama.cpp\src\models\step35.cpp:359:    cb(cur, "result_norm", -1);
