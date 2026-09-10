@@ -1,0 +1,1506 @@
+# This is a variant of the original single-BIN training script that allows
+# training with two BIN files.
+#
+# The data-loading/validation logic intentionally follows the original
+# single-BIN script independently for EACH physical dataset. Only after each
+# dataset has passed its own validation are the datasets concatenated into one
+# logical training set.
+#
+# Dataset order:
+#   Nemotron first
+#   CodeAlpaca second
+
+import os
+
+# Must be set before importing torch.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
+
+import json
+import random
+import struct
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import torch
+from safetensors.torch import load_file
+from transformers import AutoConfig, AutoTokenizer
+
+# Use the local Speculators checkout.
+sys.path.insert(0, "/home/apoc/clones/speculators/src")
+
+from speculators.models.dflash.core import DFlashDraftModel
+
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+STUDENT_DIR = Path(
+    # "/home/apoc/data/drafters/Qwen3.8-dflash-fullpass"
+    "/home/apoc/data/drafters/crucial/Qwen3.8_DFlash_STUDENT"
+)
+
+VERIFIER_SHIM = Path(
+    "/home/apoc/data/drafters/crucial/Qwen3.8_Verifier_SHIM"
+)
+
+TOKENIZER_DIR = Path(
+    "/home/apoc/data/drafters/Qwen3.8-27B-target-meta"
+)
+
+CALIBRATION_TXT = Path(
+    "/mnt/c/Local AI/data/extractions/Prompts_Nemotron2499.txt"
+)
+
+CODEALPACA_CALIBRATION_TXT = Path(
+    "/mnt/c/Local AI/data/extractions/Prompts_CodeAlpaca750.txt"
+)
+
+DATASETS = [
+    {
+        "name": "Nemotron",
+        "bin": Path(
+            "/mnt/c/Local AI/data/extractions/dflash_alignment_10k_1of4.bin"
+        ),
+        "calibration": CALIBRATION_TXT,
+        "token_counts": Path(
+            "/home/apoc/data/files/token_counts_nemotron.txt"
+        ),
+    },
+    {
+        "name": "CodeAlpaca",
+        "bin": Path(
+            "/mnt/c/Local AI/data/extractions/dflash_alignment_10k_code750.bin"
+        ),
+        "calibration": CODEALPACA_CALIBRATION_TXT,
+        "token_counts": Path(
+            "/home/apoc/data/files/token_counts_code.txt"
+        ),
+    },
+]
+
+OUTPUT_DIR = Path(
+    "/home/apoc/data/drafters/Qwen3.8-DFlash_3250"
+)
+
+MIN_TRAINING_TOKENS = 17
+
+
+# ---------------------------------------------------------------------------
+# Alignment settings
+# ---------------------------------------------------------------------------
+
+DEVICE = torch.device("cuda:0")
+DTYPE = torch.bfloat16
+
+TARGET_LAYER_IDS = [2, 17, 32, 47, 62, 64]
+DRAFT_LAYER_COUNT = 5
+HIDDEN_SIZE = 5120
+DRAFT_HIDDEN_SIZE = DRAFT_LAYER_COUNT * HIDDEN_SIZE
+VOCAB_SIZE = 248320
+MASK_TOKEN_ID = 248070
+
+BLOCK_SIZE = 16
+MAX_ANCHORS = 10
+
+LEARNING_RATE = 1e-5
+WEIGHT_DECAY = 0.01
+MAX_STEPS = 3249
+BYPASS_CAP = False
+GRAD_CLIP = 1.0
+
+SEED = 38
+
+# Unified logical record numbers, zero-based.
+SKIP_RECORDS = []
+
+
+# ---------------------------------------------------------------------------
+# Reproducibility
+# ---------------------------------------------------------------------------
+
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def gib(n):
+    return n / (1024 ** 3)
+
+
+def print_cuda_memory(label):
+    allocated = torch.cuda.memory_allocated(DEVICE)
+    reserved = torch.cuda.memory_reserved(DEVICE)
+    free, total = torch.cuda.mem_get_info(DEVICE)
+
+    print(f"\n===== CUDA memory: {label} =====")
+    print(f"allocated: {gib(allocated):.2f} GiB")
+    print(f"reserved:  {gib(reserved):.2f} GiB")
+    print(f"free:      {gib(free):.2f} GiB")
+    print(f"total:     {gib(total):.2f} GiB")
+
+
+def read_i32(f):
+    data = f.read(4)
+
+    if len(data) != 4:
+        raise RuntimeError("Unexpected EOF while reading int32")
+
+    return struct.unpack("<i", data)[0]
+
+
+def load_token_counts(path, expected_count):
+    """
+    Load a 1-based record-number -> token-count sidecar.
+
+    Expected format:
+
+        1:123
+        2:87
+        3:42
+        ...
+
+    The textual record numbers MUST be 1-based and sequential.
+
+    The returned Python list is zero-based:
+
+        token_counts[0] -> sidecar record 1
+        token_counts[1] -> sidecar record 2
+        token_counts[2] -> sidecar record 3
+    """
+
+    token_counts = []
+
+    with path.open("r", encoding="utf-8") as f:
+        for line_number, raw_line in enumerate(f, start=1):
+            line = raw_line.strip()
+
+            if not line:
+                continue
+
+            try:
+                record_number_text, token_count_text = line.split(":", 1)
+                record_number = int(record_number_text)
+                token_count = int(token_count_text)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"Invalid token-count entry at line "
+                    f"{line_number}: {line!r}"
+                ) from exc
+
+            # The sidecar is 1-based.
+            # The Python list remains zero-based.
+            expected_record_number = len(token_counts) + 1
+
+            if record_number != expected_record_number:
+                raise RuntimeError(
+                    f"Token-count sidecar is not 1-based/sequential "
+                    f"at line {line_number}: "
+                    f"found record {record_number}, "
+                    f"expected {expected_record_number}"
+                )
+
+            if token_count < 0:
+                raise RuntimeError(
+                    f"Invalid negative token count at record "
+                    f"{record_number}: {token_count}"
+                )
+
+            token_counts.append(token_count)
+
+    if len(token_counts) != expected_count:
+        raise RuntimeError(
+            f"Token-count sidecar {path} contains "
+            f"{len(token_counts)} records, but target binary contains "
+            f"{expected_count}"
+        )
+
+    return token_counts
+
+
+def index_target_bin(path, source_name):
+    """
+    Index one hidden-state BIN without loading payloads into memory.
+
+    Actual format:
+
+        int32 n_prompts_total
+
+        repeated:
+            int32 prompt_idx
+            int32 n_hidden_tokens
+            int32 n_layers
+            int32 layer_ids[n_layers]
+            float32 hidden states:
+                [n_hidden_tokens, n_layers, 5120]
+
+    record_number is the PHYSICAL record number within this BIN and is
+    zero-based.
+    """
+
+    entries = []
+
+    with path.open("rb") as f:
+        total_prompts = read_i32(f)
+
+        for record_number in range(total_prompts):
+            header_offset = f.tell()
+
+            prompt_idx = read_i32(f)
+            n_tokens = read_i32(f)
+            n_layers = read_i32(f)
+
+            if n_layers <= 0:
+                raise RuntimeError(
+                    f"{source_name} record {record_number}: "
+                    f"invalid n_layers={n_layers}"
+                )
+
+            layer_bytes = f.read(4 * n_layers)
+
+            if len(layer_bytes) != 4 * n_layers:
+                raise RuntimeError(
+                    f"{source_name} record {record_number}: "
+                    "truncated layer ID list"
+                )
+
+            layer_ids = list(
+                struct.unpack("<" + "i" * n_layers, layer_bytes)
+            )
+
+            if layer_ids != TARGET_LAYER_IDS:
+                raise RuntimeError(
+                    f"{source_name} record {record_number}: "
+                    f"unexpected layers {layer_ids}; "
+                    f"expected {TARGET_LAYER_IDS}"
+                )
+
+            payload_offset = f.tell()
+
+            payload_values = (
+                n_tokens
+                * n_layers
+                * HIDDEN_SIZE
+            )
+
+            payload_bytes = payload_values * 4
+
+            entries.append(
+                {
+                    "source_name": source_name,
+                    "source_bin": path,
+                    "record_number": record_number,
+                    "header_offset": header_offset,
+                    "prompt_idx": prompt_idx,
+                    "n_tokens": n_tokens,
+                    "n_layers": n_layers,
+                    "layer_ids": layer_ids,
+                    "payload_offset": payload_offset,
+                    "payload_bytes": payload_bytes,
+                }
+            )
+
+            f.seek(payload_bytes, os.SEEK_CUR)
+
+        trailing = f.read(1)
+
+        if trailing:
+            raise RuntimeError(
+                f"{source_name} binary contains unexpected trailing data"
+            )
+
+    if len(entries) != total_prompts:
+        raise RuntimeError(
+            f"{source_name}: indexed {len(entries)} records but "
+            f"header says {total_prompts}"
+        )
+
+    return entries
+
+
+def load_hidden_record(f, entry):
+    f.seek(entry["payload_offset"])
+
+    expected_floats = (
+        entry["n_tokens"]
+        * entry["n_layers"]
+        * HIDDEN_SIZE
+    )
+
+    expected_bytes = expected_floats * 4
+
+    raw = f.read(expected_bytes)
+
+    if len(raw) != expected_bytes:
+        raise RuntimeError(
+            f"{entry['source_name']} record "
+            f"{entry['record_number']} payload is truncated"
+        )
+
+    array = np.frombuffer(
+        raw,
+        dtype="<f4",
+    ).reshape(
+        entry["n_tokens"],
+        entry["n_layers"],
+        HIDDEN_SIZE,
+    ).copy()
+
+    if not np.isfinite(array).all():
+        raise RuntimeError(
+            f"{entry['source_name']} record "
+            f"{entry['record_number']} contains NaN/Inf"
+        )
+
+    # Reject ONLY if the ENTIRE hidden-state array is exactly zero.
+    if np.all(array == 0.0):
+        raise RuntimeError(
+            f"{entry['source_name']} record "
+            f"{entry['record_number']} contains all-zero hidden states"
+        )
+
+    return array
+
+
+def load_verifier_config():
+    config_path = STUDENT_DIR / "config.json"
+
+    with config_path.open("r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    transformer_fields = {
+        "hidden_size": raw["hidden_size"],
+        "intermediate_size": raw["intermediate_size"],
+        "num_hidden_layers": raw["num_hidden_layers"],
+        "num_attention_heads": raw["num_attention_heads"],
+        "num_key_value_heads": raw["num_key_value_heads"],
+        "head_dim": raw["head_dim"],
+        "hidden_act": raw["hidden_act"],
+        "max_position_embeddings": raw["max_position_embeddings"],
+        "sliding_window": raw["sliding_window"],
+        "max_window_layers": raw["max_window_layers"],
+        "layer_types": raw["layer_types"],
+        "rope_theta": raw["rope_theta"],
+        "rope_scaling": raw["rope_scaling"],
+        "rms_norm_eps": raw["rms_norm_eps"],
+        "attention_bias": raw["attention_bias"],
+        "attention_dropout": raw["attention_dropout"],
+        "initializer_range": raw["initializer_range"],
+        "tie_word_embeddings": raw["tie_word_embeddings"],
+        "use_sliding_window": raw["use_sliding_window"],
+        "vocab_size": raw["vocab_size"],
+    }
+
+    return AutoConfig.for_model(
+        "qwen3",
+        **transformer_fields,
+    )
+
+
+def load_calibration(path):
+    """
+    Load prompts using LF-only splitting.
+
+    Do NOT use splitlines() here.
+
+    The Nemotron source contains a U+2028 LINE SEPARATOR inside a prompt.
+    splitlines() treats that character as a prompt boundary, while the
+    original extraction treated it as part of the prompt text.
+    """
+
+    with path.open("r", encoding="utf-8") as f:
+        prompts = f.read().split("\n")
+
+    print(
+        f"  Loaded {len(prompts)} prompts from {path}"
+    )
+
+    return prompts
+
+
+def validate_dataset_calibration(
+    tokenizer,
+    source_name,
+    prompts,
+    entries,
+    token_counts,
+):
+    """
+    Validate ONE physical dataset using the same positional relationship as
+    the original working single-BIN script.
+
+        prompts[i] <-> entries[i] <-> token_counts[i]
+
+    All three Python arrays are zero-based.
+
+    The human-facing prompt number is explicitly:
+
+        prompt_number = i + 1
+
+    This is only for reporting. It does NOT change array indexing.
+
+    This function is deliberately run independently for each BIN BEFORE
+    anything is concatenated.
+    """
+
+    if not (
+        len(prompts)
+        == len(entries)
+        == len(token_counts)
+    ):
+        raise RuntimeError(
+            f"{source_name} calibration alignment count mismatch: "
+            f"prompts={len(prompts)}, "
+            f"binary={len(entries)}, "
+            f"token_counts={len(token_counts)}"
+        )
+
+    print()
+    print(f"{source_name} calibration validation:")
+    print(f"  Calibration prompts: {len(prompts)}")
+    print(f"  Binary records:      {len(entries)}")
+    print(f"  Token-count records: {len(token_counts)}")
+
+    verified_token_counts = []
+
+    for i, (prompt, entry, sidecar_count) in enumerate(
+        zip(prompts, entries, token_counts)
+    ):
+        # IMPORTANT:
+        # i remains the zero-based Python array index.
+        # prompt_number is the 1-based human-facing prompt number.
+        prompt_number = i + 1
+
+        token_ids = tokenizer(
+            prompt,
+            add_special_tokens=False,
+            return_attention_mask=False,
+        )["input_ids"]
+
+        actual = len(token_ids)
+        binary_count = entry["n_tokens"]
+
+        # First verify that the BIN and sidecar agree at this exact
+        # positional record.
+        if binary_count != sidecar_count:
+            print()
+            print("=" * 80)
+            print(
+                f"{source_name} TOKEN-COUNT ALIGNMENT ERROR"
+            )
+            print("=" * 80)
+            print(
+                f"Prompt number:       {prompt_number}"
+            )
+            print(
+                f"Local record index:  {i}"
+            )
+            print(
+                f"Prompt index:        {entry['prompt_idx']}"
+            )
+            print(
+                f"Binary count:        {binary_count}"
+            )
+            print(
+                f"Sidecar count:       {sidecar_count}"
+            )
+            print("=" * 80)
+            print()
+
+            raise RuntimeError(
+                f"{source_name} token-count alignment mismatch at "
+                f"prompt {prompt_number} "
+                f"(local record {i}): "
+                f"binary={binary_count}, "
+                f"sidecar={sidecar_count}, "
+                f"prompt_idx={entry['prompt_idx']}"
+            )
+
+        # Then verify the actual prompt tokenization against the aligned
+        # binary/sidecar count.
+        if actual != binary_count:
+            print()
+            print("=" * 80)
+            print(
+                f"{source_name} PROMPT {prompt_number} "
+                f"(LOCAL RECORD {i}):"
+            )
+            print("=" * 80)
+            print(prompt)
+            print("=" * 80)
+            print(
+                f"Tokenizer count: {actual}"
+            )
+            print(
+                f"Binary count:    {binary_count}"
+            )
+            print(
+                f"Sidecar count:   {sidecar_count}"
+            )
+            print(
+                f"Prompt index:    {entry['prompt_idx']}"
+            )
+            print("=" * 80)
+            print()
+
+            raise RuntimeError(
+                f"{source_name} token count mismatch at "
+                f"prompt {prompt_number} "
+                f"(local record {i}): "
+                f"tokenizer={actual}, "
+                f"binary={binary_count}, "
+                f"sidecar={sidecar_count}, "
+                f"prompt_idx={entry['prompt_idx']}"
+            )
+
+        verified_token_counts.append(actual)
+
+    print(
+        f"  Token counts verified: "
+        f"min={min(verified_token_counts)}, "
+        f"max={max(verified_token_counts)}, "
+        f"total={sum(verified_token_counts)}"
+    )
+
+    return verified_token_counts
+
+
+def build_dataset(dataset, tokenizer):
+    """
+    Build and fully validate ONE physical dataset.
+
+    This deliberately mirrors the original single-BIN flow:
+
+        index BIN
+        -> load sidecar
+        -> build eligible records
+        -> load calibration
+        -> validate calibration against BIN
+
+    Nothing is unified or offset during this process.
+    """
+
+    name = dataset["name"]
+    bin_path = dataset["bin"]
+    calibration_path = dataset["calibration"]
+    token_counts_path = dataset["token_counts"]
+
+    print()
+    print("=" * 72)
+    print(f"Preparing {name}")
+    print("=" * 72)
+    print(f"BIN:          {bin_path}")
+    print(f"Calibration:  {calibration_path}")
+    print(f"Token counts: {token_counts_path}")
+
+    if not bin_path.exists():
+        raise RuntimeError(
+            f"Missing {name} target binary: {bin_path}"
+        )
+
+    if not calibration_path.exists():
+        raise RuntimeError(
+            f"Missing {name} calibration file: "
+            f"{calibration_path}"
+        )
+
+    if not token_counts_path.exists():
+        raise RuntimeError(
+            f"Missing {name} token-count sidecar: "
+            f"{token_counts_path}"
+        )
+
+    # -----------------------------------------------------------------------
+    # EXACT original ordering:
+    # index the physical BIN in physical record order.
+    # -----------------------------------------------------------------------
+
+    print(f"\nIndexing {name} target binary...")
+
+    entries = index_target_bin(
+        bin_path,
+        name,
+    )
+
+    print(
+        f"Indexed {len(entries)} {name} records."
+    )
+
+    # -----------------------------------------------------------------------
+    # EXACT original sidecar operation:
+    # load counts corresponding positionally to BIN records.
+    # -----------------------------------------------------------------------
+
+    print(f"\nLoading {name} token-count sidecar...")
+
+    token_counts = load_token_counts(
+        token_counts_path,
+        len(entries),
+    )
+
+    # -----------------------------------------------------------------------
+    # EXACT original filtering operation:
+    # filter by the sidecar BEFORE MAX_STEPS.
+    # -----------------------------------------------------------------------
+
+    eligible_records = [
+        record_index
+        for record_index, token_count in enumerate(token_counts)
+        if token_count >= MIN_TRAINING_TOKENS
+    ]
+
+    skipped_records = [
+        record_index
+        for record_index, token_count in enumerate(token_counts)
+        if token_count < MIN_TRAINING_TOKENS
+    ]
+
+    print(
+        f"Minimum training tokens: {MIN_TRAINING_TOKENS}"
+    )
+
+    print(
+        f"Eligible records:        {len(eligible_records)}"
+    )
+
+    print(
+        f"Skipped short records:   {len(skipped_records)}"
+    )
+
+    if skipped_records:
+        print(
+            f"Shortest eligible record: "
+            f"{min(token_counts[i] for i in eligible_records)} tokens"
+        )
+
+    # -----------------------------------------------------------------------
+    # Load this dataset's prompts.
+    # -----------------------------------------------------------------------
+
+    print(f"\nLoading {name} calibration prompts...")
+
+    prompts = load_calibration(
+        calibration_path
+    )
+
+    # -----------------------------------------------------------------------
+    # Validate THIS dataset before concatenation.
+    # -----------------------------------------------------------------------
+
+    verified_token_counts = validate_dataset_calibration(
+        tokenizer,
+        name,
+        prompts,
+        entries,
+        token_counts,
+    )
+
+    # The tokenizer-derived counts should exactly equal the sidecar counts.
+    if verified_token_counts != token_counts:
+        raise RuntimeError(
+            f"{name}: tokenizer-verified token counts do not exactly "
+            f"match the token-count sidecar"
+        )
+
+    # -----------------------------------------------------------------------
+    # Explicitly verify the physical positional relationship.
+    #
+    # This is intentionally NOT using prompt_idx to reorder anything.
+    # The original script paired prompts and BIN records positionally.
+    # -----------------------------------------------------------------------
+
+    for i, entry in enumerate(entries):
+        if entry["record_number"] != i:
+            raise RuntimeError(
+                f"{name}: physical record ordering changed at position {i}; "
+                f"entry reports local record {entry['record_number']}"
+            )
+
+    print(
+        f"{name}: positional BIN/prompt/token-count validation PASSED."
+    )
+
+    return {
+        "name": name,
+        "bin": bin_path,
+        "entries": entries,
+        "prompts": prompts,
+        "token_counts": token_counts,
+        "eligible_records": eligible_records,
+        "skipped_records": skipped_records,
+    }
+
+
+def combine_datasets(dataset_results):
+    """
+    Concatenate already-validated physical datasets.
+
+    The first dataset occupies the first range of unified positions.
+    The second begins immediately after it.
+
+    No individual dataset is sorted or remapped here.
+    """
+
+    all_entries = []
+    all_prompts = []
+    all_token_counts = []
+
+    unified_eligible_records = []
+    unified_skipped_records = []
+
+    unified_offset = 0
+
+    for result in dataset_results:
+        entries = result["entries"]
+        prompts = result["prompts"]
+        token_counts = result["token_counts"]
+
+        if not (
+            len(entries)
+            == len(prompts)
+            == len(token_counts)
+        ):
+            raise RuntimeError(
+                f"{result['name']}: dataset lists have different lengths"
+            )
+
+        for local_index in result["eligible_records"]:
+            unified_eligible_records.append(
+                unified_offset + local_index
+            )
+
+        for local_index in result["skipped_records"]:
+            unified_skipped_records.append(
+                unified_offset + local_index
+            )
+
+        all_entries.extend(entries)
+        all_prompts.extend(prompts)
+        all_token_counts.extend(token_counts)
+
+        unified_offset += len(entries)
+
+    if not (
+        len(all_entries)
+        == len(all_prompts)
+        == len(all_token_counts)
+    ):
+        raise RuntimeError(
+            "Unified dataset lists are not the same length"
+        )
+
+    print()
+    print("=" * 72)
+    print("Unified dataset")
+    print("=" * 72)
+    print(
+        f"Total records: {len(all_entries)}"
+    )
+
+    for result in dataset_results:
+        print(
+            f"  {result['name']}: "
+            f"{len(result['entries'])} records"
+        )
+
+    print(
+        f"Unified eligible records: {len(unified_eligible_records)}"
+    )
+
+    print(
+        f"Unified skipped records:  {len(unified_skipped_records)}"
+    )
+
+    # Final positional sanity check after concatenation.
+    expected_offset = 0
+
+    for result in dataset_results:
+        count = len(result["entries"])
+
+        for local_index in range(count):
+            unified_index = expected_offset + local_index
+            entry = all_entries[unified_index]
+
+            if entry["source_name"] != result["name"]:
+                raise RuntimeError(
+                    f"Unified ordering error at record {unified_index}: "
+                    f"expected source {result['name']}, "
+                    f"got {entry['source_name']}"
+                )
+
+            if entry["record_number"] != local_index:
+                raise RuntimeError(
+                    f"Unified ordering error at record {unified_index}: "
+                    f"expected local record {local_index}, "
+                    f"got {entry['record_number']}"
+                )
+
+        expected_offset += count
+
+    print("Unified positional ordering check PASSED.")
+
+    return (
+        all_entries,
+        all_prompts,
+        all_token_counts,
+        unified_eligible_records,
+        unified_skipped_records,
+    )
+
+
+def make_batch(hidden_states, token_ids):
+    """
+    Convert one raw binary record into the exact tensors expected by the
+    actual Speculators DFlash model.
+
+    hidden_states:
+        [N, 6, 5120]
+
+    First five layers are DFlash conditioning states.
+    Layer 64 is the final verifier hidden state used to construct teacher
+    logits internally.
+    """
+
+    n_tokens = hidden_states.shape[0]
+
+    draft_hs = torch.from_numpy(
+        hidden_states[:, :DRAFT_LAYER_COUNT, :]
+    ).to(
+        device=DEVICE,
+        dtype=DTYPE,
+    )
+
+    verifier_last_hs = torch.from_numpy(
+        hidden_states[:, 5, :]
+    ).to(
+        device=DEVICE,
+        dtype=DTYPE,
+    )
+
+    input_ids = torch.tensor(
+        token_ids,
+        dtype=torch.long,
+        device=DEVICE,
+    ).unsqueeze(0)
+
+    draft_hs = draft_hs.reshape(
+        1,
+        n_tokens,
+        DRAFT_HIDDEN_SIZE,
+    )
+
+    verifier_last_hs = verifier_last_hs.unsqueeze(0)
+
+    loss_mask = torch.ones(
+        (1, n_tokens),
+        dtype=torch.bool,
+        device=DEVICE,
+    )
+
+    document_ids = torch.zeros(
+        (1, n_tokens),
+        dtype=torch.long,
+        device=DEVICE,
+    )
+
+    position_ids = torch.arange(
+        n_tokens,
+        dtype=torch.long,
+        device=DEVICE,
+    ).unsqueeze(0)
+
+    return {
+        "hidden_states": draft_hs,
+        "input_ids": input_ids,
+        "verifier_last_hidden_states": verifier_last_hs,
+        "loss_mask": loss_mask,
+        "document_ids": document_ids,
+        "position_ids": position_ids,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    print("Qwen3.8 DFlash warm-start alignment")
+    print("------------------------------------")
+    print(f"Student:       {STUDENT_DIR}")
+    print(f"Verifier shim: {VERIFIER_SHIM}")
+    print(f"Tokenizer:     {TOKENIZER_DIR}")
+    print("Target data:")
+
+    for dataset in DATASETS:
+        print(f"  {dataset['name']}:")
+        print(f"    BIN:          {dataset['bin']}")
+        print(f"    Calibration:  {dataset['calibration']}")
+        print(f"    Token counts: {dataset['token_counts']}")
+
+    print(f"Output:        {OUTPUT_DIR}")
+    print()
+    print(f"Block size:    {BLOCK_SIZE}")
+    print(f"Max anchors:   {MAX_ANCHORS}")
+    print(f"Learning rate: {LEARNING_RATE}")
+    print(f"Max steps:     {MAX_STEPS}")
+    print(f"Optimizer:     AdamW8bit")
+    print()
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is not available")
+
+    if not STUDENT_DIR.exists():
+        raise RuntimeError(
+            f"Missing student directory: {STUDENT_DIR}"
+        )
+
+    if not VERIFIER_SHIM.exists():
+        raise RuntimeError(
+            f"Missing verifier shim: {VERIFIER_SHIM}"
+        )
+
+    if not TOKENIZER_DIR.exists():
+        raise RuntimeError(
+            f"Missing tokenizer directory: {TOKENIZER_DIR}"
+        )
+
+    for dataset in DATASETS:
+        if not dataset["bin"].exists():
+            raise RuntimeError(
+                f"Missing {dataset['name']} target binary: "
+                f"{dataset['bin']}"
+            )
+
+        if not dataset["calibration"].exists():
+            raise RuntimeError(
+                f"Missing {dataset['name']} calibration file: "
+                f"{dataset['calibration']}"
+            )
+
+        if not dataset["token_counts"].exists():
+            raise RuntimeError(
+                f"Missing {dataset['name']} token-count sidecar: "
+                f"{dataset['token_counts']}"
+            )
+
+    # -----------------------------------------------------------------------
+    # Tokenizer.
+    #
+    # Load this BEFORE validating either physical dataset, because the
+    # original single-BIN script loaded the tokenizer before calibration
+    # validation.
+    # -----------------------------------------------------------------------
+
+    print("\nLoading tokenizer...")
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        TOKENIZER_DIR,
+        trust_remote_code=True,
+    )
+
+    # -----------------------------------------------------------------------
+    # Validate each physical dataset independently.
+    #
+    # This is the critical difference from the previous multi-BIN version.
+    # -----------------------------------------------------------------------
+
+    dataset_results = []
+
+    for dataset in DATASETS:
+        result = build_dataset(
+            dataset,
+            tokenizer,
+        )
+
+        dataset_results.append(result)
+
+    # -----------------------------------------------------------------------
+    # Only NOW concatenate the independently validated datasets.
+    # -----------------------------------------------------------------------
+
+    (
+        entries,
+        prompts,
+        token_counts,
+        eligible_records,
+        skipped_records,
+    ) = combine_datasets(
+        dataset_results
+    )
+
+    # -----------------------------------------------------------------------
+    # Verifier configuration.
+    # -----------------------------------------------------------------------
+
+    print("\nLoading verifier configuration...")
+
+    verifier_config = load_verifier_config()
+
+    print(
+        f"Verifier config class: "
+        f"{type(verifier_config).__name__}"
+    )
+
+    print(
+        f"Verifier hidden size: "
+        f"{getattr(verifier_config, 'hidden_size', 'unknown')}"
+    )
+
+    print(
+        f"Verifier layers: "
+        f"{getattr(verifier_config, 'num_hidden_layers', 'unknown')}"
+    )
+
+    # -----------------------------------------------------------------------
+    # Build the real DFlash model.
+    # -----------------------------------------------------------------------
+
+    print("\nConstructing DFlash model...")
+
+    model = DFlashDraftModel.from_training_args(
+        verifier_config=verifier_config,
+        draft_vocab_size=VOCAB_SIZE,
+        block_size=BLOCK_SIZE,
+        target_layer_ids=TARGET_LAYER_IDS[:5],
+        mask_token_id=MASK_TOKEN_ID,
+        verifier_name_or_path=str(VERIFIER_SHIM),
+        speculative_tokens=64,
+        loss_fn="ce",
+        loss_implementation="eager",
+    )
+
+    # Load the 58-tensor bootstrap student checkpoint.
+    checkpoint_path = STUDENT_DIR / "model.safetensors"
+
+    print(
+        f"Loading student checkpoint: {checkpoint_path}"
+    )
+
+    state_dict = load_file(
+        str(checkpoint_path),
+        device="cpu",
+    )
+
+    missing, unexpected = model.load_state_dict(
+        state_dict,
+        strict=False,
+    )
+
+    print(
+        f"Checkpoint tensors: {len(state_dict)}"
+    )
+
+    if unexpected:
+        raise RuntimeError(
+            f"Unexpected checkpoint keys: {unexpected}"
+        )
+
+    print(
+        f"Expected missing frozen verifier keys: {missing}"
+    )
+
+    model = model.to(
+        device=DEVICE,
+        dtype=DTYPE,
+    )
+
+    # -----------------------------------------------------------------------
+    # Verify gradient configuration.
+    # -----------------------------------------------------------------------
+
+    trainable_params = [
+        p for p in model.parameters()
+        if p.requires_grad
+    ]
+
+    frozen_params = [
+        p for p in model.parameters()
+        if not p.requires_grad
+    ]
+
+    trainable_count = sum(
+        p.numel() for p in trainable_params
+    )
+
+    total_count = sum(
+        p.numel() for p in model.parameters()
+    )
+
+    print()
+    print(
+        f"Total parameters:     {total_count:,}"
+    )
+
+    print(
+        f"Trainable parameters: {trainable_count:,}"
+    )
+
+    print(
+        f"Trainable percentage: "
+        f"{100.0 * trainable_count / total_count:.2f}%"
+    )
+
+    if not frozen_params:
+        raise RuntimeError(
+            "No frozen parameters found; verifier weights were "
+            "unexpectedly made trainable."
+        )
+
+    for name, param in model.named_parameters():
+        if name in {
+            "embed_tokens.weight",
+            "lm_head.weight",
+            "verifier_lm_head.weight",
+            "verifier_norm.weight",
+        }:
+            if param.requires_grad:
+                raise RuntimeError(
+                    f"{name} is unexpectedly trainable"
+                )
+
+    print("Verifier parameters confirmed frozen.")
+
+    print_cuda_memory("after model load")
+
+    # -----------------------------------------------------------------------
+    # DFlash training kwargs.
+    # -----------------------------------------------------------------------
+
+    train_kwargs, _ = DFlashDraftModel.get_trainer_kwargs(
+        loss_fn="ce",
+        loss_implementation="eager",
+        dflash_decay_gamma=4.0,
+        max_anchors=MAX_ANCHORS,
+        per_position_loss_weight="dpace",
+        dpace_alpha=0.5,
+    )
+
+    print("\nDFlash training kwargs:")
+
+    for key, value in train_kwargs.items():
+        print(f"  {key}: {value}")
+
+    # -----------------------------------------------------------------------
+    # Optimizer.
+    # -----------------------------------------------------------------------
+
+    try:
+        import bitsandbytes as bnb
+    except ImportError as exc:
+        raise RuntimeError(
+            "bitsandbytes is required for this alignment run."
+        ) from exc
+
+    print("\nCreating AdamW8bit optimizer...")
+
+    optimizer = bnb.optim.AdamW8bit(
+        trainable_params,
+        lr=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY,
+    )
+
+    print("\nOptimizer created successfully")
+
+    print(
+        f"Optimizer type: {type(optimizer)}"
+    )
+
+    print(
+        f"Optimizer param groups: "
+        f"{len(optimizer.param_groups)}"
+    )
+
+    for i, group in enumerate(
+        optimizer.param_groups
+    ):
+        print(
+            f"  group {i}: "
+            f"params={len(group['params'])}, "
+            f"lr={group['lr']}"
+        )
+
+    print_cuda_memory(
+        "after optimizer creation"
+    )
+
+    # -----------------------------------------------------------------------
+    # Record order.
+    #
+    # This is now exactly the original single-BIN operation, except that
+    # eligible_records came from the independently validated unified lists.
+    # -----------------------------------------------------------------------
+
+    print(
+        f"\nMinimum training tokens: "
+        f"{MIN_TRAINING_TOKENS}"
+    )
+
+    print(
+        f"Eligible records:        "
+        f"{len(eligible_records)}"
+    )
+
+    print(
+        f"Skipped records:         "
+        f"{len(skipped_records)}"
+    )
+
+    print(
+        f"Training steps this run: "
+        f"{min(MAX_STEPS, len(eligible_records))}"
+    )
+
+    order = eligible_records.copy()
+    random.Random(SEED).shuffle(order)
+
+    if len(order) < MAX_STEPS and not BYPASS_CAP:
+        raise RuntimeError(
+            f"Only {len(order)} eligible records are available, "
+            f"but MAX_STEPS={MAX_STEPS}"
+        )
+
+    # -----------------------------------------------------------------------
+    # Open both physical BINs once for the training loop.
+    # -----------------------------------------------------------------------
+
+    target_files = [
+        dataset["bin"].open("rb")
+        for dataset in DATASETS
+    ]
+
+    source_file_handles = {
+        dataset["name"]: target_files[i]
+        for i, dataset in enumerate(DATASETS)
+    }
+
+    # -----------------------------------------------------------------------
+    # Training.
+    # -----------------------------------------------------------------------
+
+    print()
+    print("Beginning alignment...")
+    print()
+
+    model.train()
+    optimizer.zero_grad(set_to_none=True)
+
+    start_time = time.time()
+
+    try:
+        for step in range(1, MAX_STEPS + 1):
+
+            if BYPASS_CAP:
+                relative_idx = (
+                    (step - 1) % len(order)
+                )
+
+                if relative_idx == 0 and step > 1:
+                    current_epoch = (
+                        ((step - 1) // len(order)) + 1
+                    )
+
+                    print(
+                        f"\n--- Epoch {current_epoch - 1} Complete! "
+                        f"Shuffling data for Epoch {current_epoch} ---"
+                    )
+
+                    random.Random(
+                        SEED + step
+                    ).shuffle(order)
+
+                record_index = order[relative_idx]
+
+            else:
+                record_index = order[step - 1]
+
+            entry = entries[record_index]
+
+            if entry["n_tokens"] < MIN_TRAINING_TOKENS:
+                raise RuntimeError(
+                    f"Internal filtering error: unified record "
+                    f"{record_index} has only "
+                    f"{entry['n_tokens']} tokens"
+                )
+
+            prompt = prompts[record_index]
+
+            target_file = source_file_handles[
+                entry["source_name"]
+            ]
+
+            print(
+                f"[{step:03d}/{MAX_STEPS}] "
+                f"record={record_index} "
+                f"source={entry['source_name']} "
+                f"local_record={entry['record_number']} "
+                f"prompt_idx={entry['prompt_idx']} "
+                f"tokens={entry['n_tokens']}"
+            )
+
+            try:
+                hidden_states = load_hidden_record(
+                    target_file,
+                    entry,
+                )
+
+                token_ids = tokenizer(
+                    prompt,
+                    add_special_tokens=False,
+                    return_attention_mask=False,
+                )["input_ids"]
+
+                if len(token_ids) != entry["n_tokens"]:
+                    raise RuntimeError(
+                        f"Tokenizer count changed unexpectedly: "
+                        f"{len(token_ids)} != "
+                        f"{entry['n_tokens']}"
+                    )
+
+                batch = make_batch(
+                    hidden_states,
+                    token_ids,
+                )
+
+                del hidden_states
+
+                print_cuda_memory(
+                    f"before forward step {step}"
+                )
+
+                step_start = time.time()
+
+                with torch.autocast(
+                    device_type="cuda",
+                    dtype=DTYPE,
+                ):
+                    _draft_tokens, loss, metrics = model(
+                        **batch,
+                        **train_kwargs,
+                    )
+
+                if not torch.isfinite(loss):
+                    raise RuntimeError(
+                        f"Non-finite loss at step {step}: {loss}"
+                    )
+
+                print(
+                    f"  forward loss = {loss.item():.6f}"
+                )
+
+                loss.backward()
+
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    trainable_params,
+                    GRAD_CLIP,
+                )
+
+                if not torch.isfinite(grad_norm):
+                    raise RuntimeError(
+                        f"Non-finite gradient norm at step {step}: "
+                        f"{grad_norm}"
+                    )
+
+                optimizer.step()
+
+                optimizer.zero_grad(
+                    set_to_none=True
+                )
+
+                elapsed_step = (
+                    time.time() - step_start
+                )
+
+                elapsed_total = (
+                    time.time() - start_time
+                )
+
+                print(
+                    f"  grad_norm    = "
+                    f"{float(grad_norm):.6f}"
+                )
+
+                print(
+                    f"  step_time    = "
+                    f"{elapsed_step:.2f}s"
+                )
+
+                print(
+                    f"  elapsed      = "
+                    f"{elapsed_total / 60:.1f} min"
+                )
+
+                if metrics:
+                    print(
+                        f"  metrics      = {metrics}"
+                    )
+
+                del batch
+                del loss
+                del metrics
+                del _draft_tokens
+
+                torch.cuda.empty_cache()
+
+            except Exception as exc:
+                print()
+                print("TRAINING FAILED")
+                print(
+                    f"step={step}, "
+                    f"record={record_index}, "
+                    f"source={entry['source_name']}, "
+                    f"local_record={entry['record_number']}, "
+                    f"tokens={entry['n_tokens']}"
+                )
+                print(f"error: {exc}")
+                print()
+                raise
+
+    finally:
+        for target_file in target_files:
+            target_file.close()
+
+    # -----------------------------------------------------------------------
+    # Save.
+    # -----------------------------------------------------------------------
+
+    print()
+    print("Alignment pass completed.")
+
+    OUTPUT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    print(
+        f"Saving model to: {OUTPUT_DIR}"
+    )
+
+    model.save_pretrained(
+        OUTPUT_DIR,
+    )
+
+    tokenizer.save_pretrained(
+        OUTPUT_DIR,
+    )
+
+    print()
+    print("Saved aligned model.")
+    print(
+        f"Output directory: {OUTPUT_DIR}"
+    )
+
+    print_cuda_memory(
+        "after save"
+    )
+
+
+if __name__ == "__main__":
+    main()
