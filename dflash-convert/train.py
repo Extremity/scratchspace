@@ -27,7 +27,6 @@ from speculators.models.dflash.core import DFlashDraftModel
 # ---------------------------------------------------------------------------
 
 STUDENT_DIR = Path(
-#    "/home/apoc/data/drafters/Qwen3.8-dflash-fullpass"
     "/home/apoc/data/drafters/Qwen3.8-dflash-FINAL"
 )
 
@@ -52,10 +51,10 @@ TOKEN_COUNTS_FILE = Path(
 )
 
 OUTPUT_DIR = Path(
-    "/home/apoc/data/drafters/Qwen3.8-dflash-3epoch"
+    "/home/apoc/data/drafters/Qwen3.8-dflash-1400pass"
 )
 
-MIN_TRAINING_TOKENS = 17
+MIN_TRAINING_TOKENS = 16
 
 # ---------------------------------------------------------------------------
 # Alignment settings
@@ -75,16 +74,12 @@ BLOCK_SIZE = 16
 MAX_ANCHORS = 10
 
 # Conservative warm-start alignment.
-#LEARNING_RATE = 1e-6
 LEARNING_RATE = 1e-5
 WEIGHT_DECAY = 0.01
-MAX_STEPS = 1324*3
-BYPASS_CAP = True  # When set to true, allows MAX_STEPS to be greater than the total number of prompts, ie, allows looping/epochs
+MAX_STEPS = 1345
 GRAD_CLIP = 1.0
 
-
 SEED = 38
-#SEED = 69
 
 #Skip problematic entries
 SKIP_RECORDS = [1356]
@@ -752,7 +747,7 @@ def main():
     order = eligible_records.copy()
     random.Random(SEED).shuffle(order)
 
-    if len(order) < MAX_STEPS and not BYPASS_CAP:
+    if len(order) < MAX_STEPS:
         raise RuntimeError(
             f"Only {len(order)} eligible records are available, "
             f"but MAX_STEPS={MAX_STEPS}"
@@ -772,21 +767,10 @@ def main():
     start_time = time.time()
 
     with TARGET_BIN.open("rb") as target_file:
-        #Modifying loop to allow epochs when toggled
-        for step in range(1, MAX_STEPS + 1):
-            if BYPASS_CAP:
-                relative_idx = (step - 1) % len(order)
-
-                #Check if an epoch just ended, and shuffle the prompt order if so
-                if relative_idx == 0 and step > 1:
-                    current_epoch = ((step - 1) // len(order)) + 1
-                    print(f"\n--- Epoch {current_epoch - 1} Complete! Shuffling data for Epoch {current_epoch} ---")
-                    random.Random(SEED + step).shuffle(order)
-
-                record_index = order[relative_idx]
-            else:
-                record_index = order[step - 1]
-
+        for step, record_index in enumerate(
+            order[:MAX_STEPS],
+            start=1,
+        ):
             entry = entries[record_index]
             if entry["n_tokens"] < MIN_TRAINING_TOKENS:
                 raise RuntimeError(
